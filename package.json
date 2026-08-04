@@ -1,0 +1,21 @@
+{
+  "name": "figflow",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Pull Figma comments into local state and emit work packets for an AI agent.",
+  "type": "module",
+  "bin": {
+    "figflow": "./bin/figflow.mjs"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test 'test/*.test.ts'"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "typescript": "^5.9.2"
+  }
+}
