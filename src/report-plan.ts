@@ -49,7 +49,7 @@ export function planReport(input: PlanInput): PlannedReport[] {
       nodeId: record?.nodeId ?? null,
       route,
       previewUrl,
-      message: buildMessage({ pr, branch, note, previewUrl, route }),
+      message: buildMessage({ pr, branch, note, previewUrl, issue: record?.issue ?? null }),
       devResources: [],
       skip: null,
       stale: record ? isStale(record) : false,
@@ -68,8 +68,16 @@ export function planReport(input: PlanInput): PlannedReport[] {
     if (record.nodeId && !nodesSeen.has(record.nodeId)) {
       nodesSeen.add(record.nodeId)
       devResources.push({ name: 'Preview', url: previewUrl, file_key: fileKey, node_id: record.nodeId })
-      if (pr) {
+      if (pr?.url) {
         devResources.push({ name: `PR #${pr.number}`, url: pr.url, file_key: fileKey, node_id: record.nodeId })
+      }
+      if (record.issue) {
+        devResources.push({
+          name: `Issue #${record.issue.number}`,
+          url: record.issue.url,
+          file_key: fileKey,
+          node_id: record.nodeId,
+        })
       }
     }
 
@@ -98,7 +106,7 @@ function buildMessage(args: {
   branch: string
   note: string | null
   previewUrl: string
-  route: string | null
+  issue: { number: number; url: string } | null
 }): string {
   const lines: string[] = []
 
@@ -108,8 +116,9 @@ function buildMessage(args: {
     lines.push(args.note)
   }
   lines.push('')
-  lines.push(args.route ? `Preview: ${args.previewUrl}` : `Preview: ${args.previewUrl}`)
-  if (args.pr) lines.push(`PR: ${args.pr.url}`)
+  lines.push(`Preview: ${args.previewUrl}`)
+  if (args.pr?.url) lines.push(`PR: ${args.pr.url}`)
+  if (args.issue) lines.push(`Issue: ${args.issue.url}`)
   lines.push('')
   lines.push('Ready for your review — resolve this comment if it looks right.')
 

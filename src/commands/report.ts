@@ -2,6 +2,7 @@ import { has, parseArgs, str } from '../args.ts'
 import { loadConfig, requireRoot, requireToken } from '../config.ts'
 import { postDevResources, postReaction, postReply } from '../figma-write.ts'
 import { planReport, type PlannedReport } from '../report-plan.ts'
+import { checkPreview } from '../preview.ts'
 import { currentBranch, findPullRequest, previewBase, pullRequestByNumber, type PullRequest } from '../project.ts'
 import { loadRoutes } from '../routes.ts'
 import { loadState, saveState } from '../state.ts'
@@ -65,6 +66,26 @@ export async function report(argv: string[]): Promise<void> {
   if (actionable.length === 0) {
     console.log(`  ${dim('nothing to post.')}\n`)
     return
+  }
+
+  // Never send the designer to a dead link — one bad notification and they stop
+  // opening them.
+  if (!has(args, '--skip-check')) {
+    const urls = [...new Set(actionable.map((item) => item.previewUrl))]
+    let blocked = false
+    for (const url of urls) {
+      const check = await checkPreview(url)
+      const line = `    ${check.ok ? green('✓') : yellow('✗')} ${url}  ${dim(check.reason)}`
+      console.log(line)
+      if (!check.ok) blocked = true
+    }
+    console.log('')
+    if (blocked) {
+      throw new Error(
+        'The preview is not reachable, so nothing was posted.\n' +
+          '  Wait for the deploy, pass --preview <url>, or --skip-check to post anyway.',
+      )
+    }
   }
 
   if (!shouldPost) {

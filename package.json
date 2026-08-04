@@ -1,6 +1,6 @@
 {
   "name": "figflow",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Pull Figma comments into local state and emit work packets for an AI agent.",
   "type": "module",

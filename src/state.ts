@@ -41,6 +41,7 @@ export type ThreadRecord = {
   url: string
   work?: WorkRef
   reported?: ReportRef
+  issue?: { number: number; url: string; title: string }
 }
 
 export type State = {

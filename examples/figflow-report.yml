@@ -1,0 +1,60 @@
+# Auto-report to the designer when a preview deploy goes live.
+#
+# Copy into .github/workflows/ of the app repo (not figflow's).
+#
+# This is the piece that makes the loop hands-free: you run `figflow start`
+# before you begin, push, and the designer is notified the moment the preview
+# is actually up — not when the code was written.
+#
+# Requires:
+#   - secrets.FIGMA_TOKEN with file_comments:write and file_dev_resources:write
+#   - .figflow/state.json committed, with threads already marked via `figflow start`
+#   - figflow reachable — replace the install step once it is published
+
+name: figflow report
+
+on:
+  deployment_status:
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  report:
+    # Only when a deploy actually succeeded and has a URL to send people to.
+    if: github.event.deployment_status.state == 'success' && github.event.deployment_status.environment_url != ''
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.deployment.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install figflow
+        run: npm install -g github:YOUR_GH_USER/figflow
+
+      - name: Report to Figma
+        env:
+          FIGMA_TOKEN: ${{ secrets.FIGMA_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # environment_url is the real deployed URL, so no branch-slug guessing.
+          figflow report \
+            --branch "${{ github.event.deployment.ref }}" \
+            --preview "${{ github.event.deployment_status.environment_url }}" \
+            --post
+
+      - name: Commit updated state
+        run: |
+          if [[ -n "$(git status --porcelain .figflow/state.json)" ]]; then
+            git config user.name "figflow"
+            git config user.email "figflow@users.noreply.github.com"
+            git add .figflow/state.json
+            git commit -m "chore(figflow): record reports for ${{ github.event.deployment.ref }}"
+            git push
+          fi

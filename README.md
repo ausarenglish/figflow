@@ -4,7 +4,7 @@ Carries Figma comments into your repo, and carries the result back to the design
 
 ```
 Sara comments in Figma
-  → figflow sync            you see it in the terminal
+  → figflow watch           desktop ping, seconds later
   → figflow context         work packet → agent implements it
   → figflow start           threads tied to your branch
   → push, preview deploys
@@ -28,10 +28,10 @@ Figma personal access token — **figma.com → Settings → Security → Person
 
 | scope | needed for |
 |---|---|
-| `file_comments:read` | `sync` |
+| `file_comments:read` | `sync`, `watch` |
 | `file_content:read` | frame names |
-| `file_comments:write` | `report` (the reply and the ✅) |
-| `file_dev_resources:write` | `report` (pinning PR/preview to the frame) |
+| `file_comments:write` | `report` — the reply and the ✅ |
+| `file_dev_resources:write` | `report` — pinning PR/preview to the frame |
 
 ```sh
 export FIGMA_TOKEN=figd_…        # or .env.local next to .figflow/
@@ -49,53 +49,80 @@ figflow routes --init            # stub listing every commented frame
 $EDITOR .figflow/routes.json     # fill in "/services", "/provider", …
 ```
 
-`routes.json` is what turns "a comment on the Service Card frame" into "look at
-`/services` on the preview". Frames you leave blank still work — the reply just
-links the preview root.
+`routes.json` turns "a comment on the Service Card frame" into "look at `/services`
+on the preview". Frames you leave blank still work — the reply links the preview root.
 
 ## Daily
 
 ```sh
 figflow sync                       # what changed in Figma
+figflow watch                      # or leave this running — pings you on new comments
 figflow status                     # open / in progress / awaiting review
 figflow context --open | pbcopy    # paste into Claude Code
+figflow open 1382                  # jump to the thread in Figma
 
+figflow issue 1382 1383            # optional: one GitHub issue for both comments
 figflow start 1382 1383            # before you begin
 # …implement, push, preview deploys…
-figflow report                     # dry run — shows the exact reply
+figflow report                     # dry run — exact reply, and checks the preview is up
 figflow report --post              # send it
 ```
 
-`report` with no thread ids picks up everything you ran `start` on for the current
-branch. It finds the PR through `gh` if there is one. `--note "…"` adds a line of
-your own to the reply; `--pr N` and `--preview URL` override the lookups.
+`report` with no thread ids picks up everything you `start`ed on the current branch,
+and finds the PR through `gh`. `--note "…"` adds your own line; `--pr N` and
+`--preview URL` override the lookups.
+
+## Using it from Claude Code
+
+`skills/figflow/SKILL.md` is a Claude Code skill — symlink it into `~/.claude/skills/`
+and Claude drives the whole loop when you mention design comments. It's told never to
+run `--post` without showing you the dry run first, never to pass `--skip-check`, and
+to stop and re-read when a comment was edited after you started.
+
+## Making it hands-free
+
+`examples/figflow-report.yml` is a GitHub Actions workflow that fires on
+`deployment_status` success and runs `figflow report --post` — so the designer is
+notified the moment the preview is genuinely live, not when the code was written.
+It uses the deploy's own `environment_url`, so there's no branch-slug guessing.
+
+Copy it into the app repo, add `FIGMA_TOKEN` as a secret, and `figflow start` becomes
+the only thing you run by hand.
 
 ## Safety
 
-**`report` never posts unless you pass `--post`.** Default is a dry run that prints
-the exact text, the exact URLs, and what would get pinned to which frame.
+**`report` never posts unless you pass `--post`.** Default is a dry run printing the
+exact text, the exact URLs, and what would be pinned to which frame.
 
-**It cannot notify the designer twice.** Two independent guards: our own state
-records what was posted at which content hash, and — if state is ever lost — it
-scans the thread's existing replies for the PR/preview link before posting. Change
-the comment or the PR and it posts again; otherwise it stays quiet. This is the
-thing that decides whether the designer trusts the tool or mutes the file.
+**It checks the preview is actually reachable first.** A 404 or 5xx blocks the post.
+Vercel deployment protection (401/403) passes — the deploy exists, we just can't see
+it. Sending a designer to a dead link once is enough for them to stop opening the
+notifications.
 
-**Reads and writes are separate modules.** `src/figma.ts` is GET-only and asserts
-it at runtime. `src/figma-write.ts` is the only file that can post, and only
-`report` imports it. "Does this touch the designer's file?" is answerable by grep.
+**It cannot notify twice.** Two independent guards: state records what was posted at
+which content hash, and — if state is ever lost — it scans the thread's existing
+replies for the PR/preview link before posting. Change the comment or the PR and it
+speaks again; otherwise it stays quiet.
 
-**Edits after you start are surfaced.** If Sara changes the ask while you're
-working, `sync` and `status` flag it and `report` marks it ⚠ rather than telling
-her something stale is ready.
+**Reads and writes are separate modules.** `src/figma.ts` is GET-only and asserts it
+at runtime. `src/figma-write.ts` is the only file that can post, imported only by
+`report`. "Does this touch the designer's file?" is answerable by grep.
+
+**Edits after you start are surfaced.** If Sara changes the ask while you're working,
+`sync`, `watch`, and `status` flag it, and `report` marks it ⚠ rather than telling her
+something stale is ready.
+
+**`issue` acts immediately**, no `--post` — it writes to your own repo, where a
+mistake is trivially deletable. The safety default tracks real risk, not symmetry.
+`--dry-run` shows the body first.
 
 ## State
 
-`.figflow/state.json` is the whole database — commit it. Git gives you sync,
-history, and conflict resolution for free, and changes show up in PR diffs.
+`.figflow/state.json` is the whole database — commit it. Git gives you sync, history,
+and conflict resolution for free, and changes show up in PR diffs.
 
-Statuses: `open` → `in_progress` (start) → `reported` (report) → `resolved`
-(the designer, in Figma) — plus `gone` for deleted comments. Figma always wins on
+Statuses: `open` → `in_progress` (start) → `reported` (report) → `resolved` (the
+designer, in Figma) — plus `gone` for deleted comments. Figma always wins on
 `resolved`; the middle two are ours.
 
 ## Layout
@@ -105,25 +132,28 @@ src/figma.ts         read-only client + thread grouping   (GET only, enforced)
 src/figma-write.ts   the only module that posts to Figma
 src/state.ts         schema + reconcile                   (pure, tested)
 src/report-plan.ts   what would be posted, and why not    (pure, tested)
+src/preview.ts       is the deploy actually up            (pure policy, tested)
 src/project.ts       branch, PR via gh, preview URL
 src/routes.ts        frame → app path
-src/commands/        init, sync, status, context, routes, start, report
+src/sync-core.ts     one pull-and-fold, shared by sync and watch
+src/commands/        init, sync, watch, status, context, routes, open, issue, start, report
+skills/figflow/      Claude Code skill
+examples/            GitHub Actions workflow for auto-report on deploy
 docs/RESEARCH.md     API constraints, prior art, what was ruled out
 ```
 
-`npm test` — 20 tests over reconcile and report planning, no network.
+`npm test` — 24 tests, no network.
 
 ## Deliberately not built
 
-**Playwright screenshot diffing.** The reply carries a live preview URL; the
-designer clicking through beats any screenshot, and Figma comments can't hold
-images via the API. Screenshots are for local verification later, not for the loop.
+**Playwright screenshot diffing.** The reply carries a live preview URL and `report`
+verifies it responds; the designer clicking through beats any screenshot, and Figma
+comments can't hold images via the API. A headless browser download for marginal gain.
 
-**GitHub issues.** Only worth it if you want the work tracked somewhere other than
-the Figma thread. The thread is already the tracker.
+**An MCP wrapper.** The skill covers the agent surface, and the CLI already works from
+any agent that can run a shell. ~50 lines to add if a reason appears.
 
-**An MCP wrapper.** The CLI is the interface; adding MCP is ~50 lines when there's
-a reason to want it.
+**Webhooks.** Figma's `FILE_COMMENT` fires on creation only — there is no resolve
+event — so polling is required regardless. `watch` is the honest version of that.
 
-See `docs/RESEARCH.md` for the reasoning on each, plus the Figma API limits that
-shaped this.
+See `docs/RESEARCH.md` for the API limits behind each.
