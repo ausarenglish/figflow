@@ -54,7 +54,7 @@ test('an unchanged re-sync reports nothing', () => {
   const first = sync(emptyState(KEY), [comment({ id: '1' })], T1)
   const second = sync(first.state, [comment({ id: '1' })], T2)
 
-  assert.deepEqual(second.delta, { added: [], resolved: [], reopened: [], edited: [], gone: [] })
+  assert.deepEqual(second.delta, { added: [], resolved: [], reopened: [], edited: [], gone: [], staleWork: [] })
   assert.equal(second.state.threads['1']?.firstSeenAt, T1, 'firstSeenAt is preserved')
   assert.equal(second.state.threads['1']?.lastSeenAt, T2)
 })

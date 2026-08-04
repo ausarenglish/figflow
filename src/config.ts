@@ -4,6 +4,8 @@ import { dirname, join, resolve } from 'node:path'
 export type Config = {
   fileKey: string
   fileName?: string
+  /** `{branch}` is replaced with the Vercel-style slug of the current branch. */
+  preview?: { baseUrl: string }
 }
 
 /** Walk up from cwd looking for a .figflow directory. */

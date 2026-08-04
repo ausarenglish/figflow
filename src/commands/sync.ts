@@ -42,6 +42,9 @@ function report(state: State, delta: Delta, total: number): void {
   if (delta.reopened.length) lines.push(yellow(`  ↺ ${delta.reopened.length} reopened`))
   if (delta.edited.length) lines.push(yellow(`  ✎ ${delta.edited.length} edited`))
   if (delta.gone.length) lines.push(yellow(`  ⚠ ${delta.gone.length} deleted from file`))
+  if (delta.staleWork.length) {
+    lines.push(yellow(`  ⚠ ${delta.staleWork.length} edited after you started work — re-check before reporting`))
+  }
 
   if (lines.length === 0) {
     console.log(dim('  no changes since last sync\n'))
@@ -51,7 +54,7 @@ function report(state: State, delta: Delta, total: number): void {
   console.log('')
   console.log(lines.join('\n'))
 
-  const highlight = [...delta.added, ...delta.reopened]
+  const highlight = [...new Set([...delta.added, ...delta.reopened, ...delta.staleWork])]
   if (highlight.length > 0) {
     console.log('')
     for (const id of highlight) {

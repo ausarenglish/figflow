@@ -1,12 +1,16 @@
 import { loadConfig, requireRoot } from '../config.ts'
 import { fmtTime } from '../packet.ts'
-import { groupByFrame, loadState, type ThreadRecord } from '../state.ts'
+import { loadRoutes } from '../routes.ts'
+import { groupByFrame, isStale, loadState, type State, type ThreadRecord } from '../state.ts'
 import { dim, green, yellow } from '../term.ts'
+
+const ACTIVE: ThreadRecord['status'][] = ['open', 'in_progress', 'reported']
 
 export function status(args: string[]): void {
   const root = requireRoot()
   const config = loadConfig(root)
   const state = loadState(root, config.fileKey)
+  const routes = loadRoutes(root)
 
   const all = Object.entries(state.threads)
   if (all.length === 0) {
@@ -14,44 +18,62 @@ export function status(args: string[]): void {
     return
   }
 
-  const showAll = args.includes('--all')
-  const counts = {
-    open: all.filter(([, t]) => t.status === 'open').length,
-    resolved: all.filter(([, t]) => t.status === 'resolved').length,
-    gone: all.filter(([, t]) => t.status === 'gone').length,
-  }
+  const count = (status: ThreadRecord['status']) => all.filter(([, t]) => t.status === status).length
 
   console.log(`\n  ${config.fileName ?? config.fileKey}`)
   console.log(
-    `  ${counts.open} open  ${dim('·')}  ${counts.resolved} resolved` +
-      (counts.gone ? `  ${dim('·')}  ${counts.gone} deleted` : '') +
-      (state.lastSyncAt ? `  ${dim(`· synced ${fmtTime(state.lastSyncAt)}`)}` : ''),
+    `  ${count('open')} open  ${dim('·')}  ${count('in_progress')} in progress  ${dim('·')}  ` +
+      `${count('reported')} awaiting review  ${dim('·')}  ${count('resolved')} resolved` +
+      (state.lastSyncAt ? `\n  ${dim(`synced ${fmtTime(state.lastSyncAt)}`)}` : ''),
   )
 
-  const visible = all.filter(([, t]) => (showAll ? t.status !== 'gone' : t.status === 'open'))
+  const stale = all.filter(([, t]) => isStale(t) && ACTIVE.includes(t.status))
+  if (stale.length > 0) {
+    console.log(yellow(`\n  ⚠ ${stale.length} comment${stale.length === 1 ? '' : 's'} edited after you started work:`))
+    for (const [id] of stale) console.log(yellow(`      ${id}`))
+  }
+
+  const showAll = args.includes('--all')
+  const visible = all.filter(([, t]) => (showAll ? t.status !== 'gone' : ACTIVE.includes(t.status)))
   if (visible.length === 0) {
     console.log(green('\n  nothing open — all caught up\n'))
     return
   }
 
   for (const [frame, group] of groupByFrame(state, visible)) {
-    console.log(`\n  ${frame}  ${dim(`(${group.length})`)}`)
+    const route = group[0]?.[1].nodeId ? routes[group[0][1].nodeId as string] : undefined
+    console.log(`\n  ${frame}  ${dim(`(${group.length})`)}${route ? dim(`  ${route}`) : ''}`)
     for (const [id, record] of group) {
-      console.log(`    ${mark(record)} ${id}  ${dim(`@${record.author}`)}  ${summarize(record)}`)
+      console.log(`    ${mark(record)} ${id}  ${dim(`@${record.author}`)}  ${summarize(state, record)}`)
     }
   }
 
-  console.log(`\n  ${dim('figflow context <id>')}  or  ${dim('figflow context --open')}\n`)
+  console.log(`\n  ${dim('figflow context <id>')}  ${dim('·')}  ${dim('figflow start <id>')}\n`)
 }
 
 function mark(record: ThreadRecord): string {
-  if (record.status === 'resolved') return green('✓')
-  if (record.status === 'gone') return yellow('⚠')
-  return '○'
+  switch (record.status) {
+    case 'resolved':
+      return green('✓')
+    case 'reported':
+      return green('◉')
+    case 'in_progress':
+      return '◐'
+    case 'gone':
+      return yellow('⚠')
+    default:
+      return '○'
+  }
 }
 
-function summarize(record: ThreadRecord): string {
+function summarize(_state: State, record: ThreadRecord): string {
   const first = (record.message.split('\n')[0] ?? '').trim()
-  const replies = record.replies.length > 0 ? dim(`  (${record.replies.length} ${record.replies.length === 1 ? 'reply' : 'replies'})`) : ''
-  return (first.length <= 70 ? first : first.slice(0, 69) + '…') + replies
+  const head = first.length <= 66 ? first : first.slice(0, 65) + '…'
+  const parts: string[] = []
+  if (record.replies.length > 0) {
+    parts.push(`${record.replies.length} ${record.replies.length === 1 ? 'reply' : 'replies'}`)
+  }
+  if (record.work) parts.push(record.work.branch)
+  if (isStale(record)) parts.push('edited since')
+  return head + (parts.length > 0 ? dim(`  (${parts.join(', ')})`) : '')
 }

@@ -1,27 +1,40 @@
 import { existsSync } from 'node:fs'
 import { relative } from 'node:path'
-import { configPath, saveConfig } from '../config.ts'
+import { has, parseArgs, str } from '../args.ts'
+import { configPath, saveConfig, type Config } from '../config.ts'
 import { parseFileKey } from '../figma.ts'
+import { dim } from '../term.ts'
 
-export function init(args: string[]): void {
-  const target = args.find((a) => !a.startsWith('-'))
+export function init(argv: string[]): void {
+  const args = parseArgs(argv)
+  const target = args.positionals[0]
   if (!target) {
-    throw new Error('Usage: figflow init <figma-file-url-or-key> [--name "Project"]')
+    throw new Error(
+      'Usage: figflow init <figma-file-url-or-key> [--name "Project"] [--preview "https://app-git-{branch}.vercel.app"]',
+    )
   }
 
   const root = process.cwd()
   const path = configPath(root)
-  if (existsSync(path) && !args.includes('--force')) {
+  if (existsSync(path) && !has(args, '--force')) {
     throw new Error(`${relative(root, path)} already exists. Pass --force to overwrite.`)
   }
 
-  const nameIdx = args.indexOf('--name')
-  const fileName = nameIdx >= 0 ? args[nameIdx + 1] : undefined
-  const fileKey = parseFileKey(target)
+  const fileName = str(args, '--name')
+  const preview = str(args, '--preview')
+  const config: Config = {
+    fileKey: parseFileKey(target),
+    ...(fileName ? { fileName } : {}),
+    ...(preview ? { preview: { baseUrl: preview } } : {}),
+  }
 
-  saveConfig(root, { fileKey, ...(fileName ? { fileName } : {}) })
+  saveConfig(root, config)
 
   console.log(`\n  wrote ${relative(root, path)}`)
-  console.log(`  file key: ${fileKey}`)
+  console.log(`  file key: ${config.fileKey}`)
+  if (!preview) {
+    console.log(dim('\n  no preview URL set — add one before using `figflow report`:'))
+    console.log(dim('    "preview": { "baseUrl": "https://your-app-git-{branch}.vercel.app" }'))
+  }
   console.log(`\n  next: export FIGMA_TOKEN=figd_… && figflow sync\n`)
 }

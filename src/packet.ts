@@ -1,14 +1,16 @@
 import type { Config } from './config.ts'
-import { frameLabel, groupByFrame, type State, type ThreadRecord } from './state.ts'
+import type { Routes } from './routes.ts'
+import { frameLabel, groupByFrame, isStale, type State, type ThreadRecord } from './state.ts'
 
 /**
  * A work packet is deterministic Markdown, built to be pasted straight into an
  * agent. figflow deliberately makes no model calls of its own — it compiles
- * context, the caller supplies the intelligence.
+ * context, the caller supplies the judgement.
  */
 export function renderPacket(
   state: State,
   config: Config,
+  routes: Routes,
   entries: [string, ThreadRecord][],
   opts: { heading?: string } = {},
 ): string {
@@ -21,17 +23,26 @@ export function renderPacket(
   if (state.lastSyncAt) out.push(`Last synced: ${fmtTime(state.lastSyncAt)}`)
   out.push('')
   out.push(
-    'Each thread below is verbatim designer feedback anchored to a Figma frame. ' +
-      'Figma has no API to resolve a comment, so nothing here has been written back — ' +
-      'these are read-only.',
+    'Verbatim designer feedback, grouped by the Figma frame each comment is pinned to. ' +
+      'Nothing here has been written back to Figma.',
   )
+  out.push('')
+  out.push('When the work is done and a preview is deployed, close the loop with:')
+  out.push('')
+  out.push('```sh')
+  out.push(`figflow start ${entries.map(([id]) => id).join(' ')}   # before you begin`)
+  out.push('figflow report                                # dry run, then --post')
+  out.push('```')
   out.push('')
 
   for (const [frame, group] of groupByFrame(state, entries)) {
-    const nodeId = group[0]?.[1].nodeId
+    const nodeId = group[0]?.[1].nodeId ?? null
+    const route = nodeId ? routes[nodeId] : undefined
+
     out.push('---')
     out.push('')
     out.push(`## ${frame}${nodeId ? ` \`${nodeId}\`` : ''}`)
+    if (route) out.push(`App route: \`${route}\``)
     out.push('')
 
     for (const [id, record] of group) {
@@ -49,6 +60,19 @@ export function renderPacket(
         out.push('')
       }
 
+      if (record.work) {
+        out.push(`Work started ${fmtTime(record.work.startedAt)} on branch \`${record.work.branch}\`.`)
+        out.push('')
+      }
+      if (record.reported) {
+        out.push(`Already reported ${fmtTime(record.reported.at)} → ${record.reported.url}`)
+        out.push('')
+      }
+      if (isStale(record)) {
+        out.push('> ⚠ **This comment changed after work started — re-read it before acting.**')
+        out.push('')
+      }
+
       out.push(`[Open in Figma](${record.url})`)
       out.push('')
     }
@@ -57,9 +81,15 @@ export function renderPacket(
   return out.join('\n')
 }
 
-export function renderJson(state: State, entries: [string, ThreadRecord][]): string {
+export function renderJson(state: State, routes: Routes, entries: [string, ThreadRecord][]): string {
   return JSON.stringify(
-    entries.map(([id, record]) => ({ id, frame: frameLabel(state, record.nodeId), ...record })),
+    entries.map(([id, record]) => ({
+      id,
+      frame: frameLabel(state, record.nodeId),
+      route: record.nodeId ? (routes[record.nodeId] ?? null) : null,
+      stale: isStale(record),
+      ...record,
+    })),
     null,
     2,
   )
