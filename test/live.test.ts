@@ -16,11 +16,20 @@ const TOKEN = process.env.FIGMA_TOKEN ?? process.env.FIGMA_ACCESS_TOKEN ?? ''
 const RUN = process.env.FIGFLOW_LIVE === '1' && TOKEN !== ''
 const opts = { skip: RUN ? false : 'set FIGFLOW_LIVE=1 and FIGMA_TOKEN to run' }
 
-test('the real board reads, and looks like a review file', opts, async () => {
-  const comments = await fetchComments(KEY, TOKEN)
-  assert.ok(comments.length > 20, `expected a populated board, got ${comments.length}`)
+// Figma rate-limits comment reads hard. Fetch once and share: a test suite that
+// hammers the designer's file is a test suite nobody runs twice.
+let cached: Awaited<ReturnType<typeof fetchComments>> | null = null
+async function comments() {
+  if (!cached) cached = await fetchComments(KEY, TOKEN)
+  return cached
+}
+const threadsOnce = async () => toThreads(KEY, await comments(), 'board')
 
-  const threads = toThreads(KEY, comments, 'board')
+test('the real board reads, and looks like a review file', opts, async () => {
+  const raw = await comments()
+  assert.ok(raw.length > 20, `expected a populated board, got ${raw.length}`)
+
+  const threads = await threadsOnce()
   assert.ok(threads.length > 20)
   assert.ok(threads.every((t) => t.id && t.author && t.createdAt), 'every thread is fully formed')
   assert.ok(
@@ -30,13 +39,13 @@ test('the real board reads, and looks like a review file', opts, async () => {
 })
 
 test('comment links point at /board/, since this file is FigJam', opts, async () => {
-  const threads = toThreads(KEY, await fetchComments(KEY, TOKEN), 'board')
+  const threads = await threadsOnce()
   assert.ok(threads.every((t) => t.url.includes('/board/')))
   assert.ok(!threads.some((t) => t.url.includes('/design/')))
 })
 
 test('anchors resolve to frame names on a FigJam board', opts, async () => {
-  const threads = toThreads(KEY, await fetchComments(KEY, TOKEN), 'board')
+  const threads = await threadsOnce()
   const anchors = threads.map((t) => t.anchorId).filter((id): id is string => id !== null)
   assert.ok(anchors.length > 0)
 
@@ -48,7 +57,7 @@ test('anchors resolve to frame names on a FigJam board', opts, async () => {
 // Two syncs of an unchanged file must produce no delta. If this fails, `watch`
 // would ping the user on every poll.
 test('a second sync of an unchanged file reports nothing', opts, async () => {
-  const threads = toThreads(KEY, await fetchComments(KEY, TOKEN), 'board')
+  const threads = await threadsOnce()
   const first = reconcile(emptyState(KEY), threads, '2026-08-05T00:00:00Z')
   const second = reconcile(first.state, threads, '2026-08-05T01:00:00Z')
 
@@ -59,7 +68,7 @@ test('a second sync of an unchanged file reports nothing', opts, async () => {
 })
 
 test('fetching twice yields identical threads — the read is deterministic', opts, async () => {
-  const a = toThreads(KEY, await fetchComments(KEY, TOKEN), 'board')
+  const a = await threadsOnce()
   const b = toThreads(KEY, await fetchComments(KEY, TOKEN), 'board')
   assert.deepEqual(
     a.map((t) => ({ id: t.id, hash: t.message, anchor: t.anchorId })),
@@ -69,7 +78,6 @@ test('fetching twice yields identical threads — the read is deterministic', op
 
 // The whole point of the tool: nothing above may have changed the file.
 test('the board is untouched by this test run', opts, async () => {
-  const comments = await fetchComments(KEY, TOKEN)
-  const mine = comments.filter((c) => /figflow/i.test(c.message))
+  const mine = (await comments()).filter((c) => /figflow/i.test(c.message))
   assert.deepEqual(mine, [], 'no figflow-authored comment should exist yet')
 })

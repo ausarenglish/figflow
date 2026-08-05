@@ -15,10 +15,15 @@ whether the work is actually done.
 ## The loop
 
 ```sh
+figflow doctor                    # is the project wired up at all?
 figflow sync                      # pull comments, print what changed
 figflow status                    # open / in progress / awaiting review, grouped by frame
 figflow context --open            # or: figflow context 1382 1401
 ```
+
+If a command fails with a config, token or state problem, run `figflow doctor`
+before guessing. It names the broken thing and how to fix it, and exits non-zero
+when something would stop `report` working.
 
 `context` prints a Markdown work packet: verbatim comment text, replies, the Figma frame, the
 app route it maps to, and any prior work on it. **Read the packet before touching code.** Do
@@ -33,6 +38,23 @@ figflow start 1382 1401           # ties these threads to the current branch
 figflow report                    # DRY RUN — prints the exact reply and checks the preview is up
 figflow report --post             # sends it
 ```
+
+**Prefer a commit trailer over `figflow start`.** When you commit work that came
+from a comment, add the thread id to the commit body:
+
+```
+fix(bookings): let a rider cancel an upcoming booking
+
+Figma: 1858203401
+```
+
+`report` picks those up from `base..HEAD` with no prior marking, they survive
+rebase and squash, and the claim sits in the diff where a human reviews it. Use
+`start` when you want the thread marked as in-progress before the work exists.
+
+Only add a trailer for a thread the change genuinely addresses. The trailer is
+what makes figflow tell a designer their comment is done — it is a claim, not a
+cross-reference.
 
 ## Rules
 
