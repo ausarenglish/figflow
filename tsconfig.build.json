@@ -1,0 +1,15 @@
+// Emit JavaScript for installed copies. Node strips types on import, but
+// refuses to do so under node_modules — so a git install needs real .js.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "declaration": false,
+    "sourceMap": true,
+    // Rewrites the `./foo.ts` imports in src to `./foo.js` in the output.
+    "allowImportingTsExtensions": false,
+    "rewriteRelativeImportExtensions": true
+  },
+  "include": ["src/**/*.ts"]
+}
