@@ -6,7 +6,7 @@ import { dim, green, yellow } from '../term.ts'
 export async function sync(args: string[]): Promise<void> {
   const root = requireRoot()
   const config = loadConfig(root)
-  const token = requireToken()
+  const token = requireToken(root)
 
   const { state, delta, threads } = await runSync(root, config, token, { write: !args.includes('--dry-run') })
 

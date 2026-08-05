@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { toThreads, type FigmaComment } from '../src/figma.ts'
+import { toThreads, type FigmaComment } from '../src/adapters/figma/read.ts'
 import { emptyState, reconcile, type State } from '../src/state.ts'
 
 const KEY = 'abc123'
@@ -35,12 +35,12 @@ test('groups replies under their root thread', () => {
   assert.equal(threads.length, 1)
   assert.equal(threads[0]?.replies.length, 2)
   assert.equal(threads[0]?.replies[0]?.author, 'marco')
-  assert.equal(threads[0]?.nodeId, '1:234')
+  assert.equal(threads[0]?.anchorId, '1:234')
 })
 
 test('a pin on bare canvas has no node anchor', () => {
   const threads = toThreads(KEY, [comment({ id: '1', client_meta: { x: 10, y: 20 } })])
-  assert.equal(threads[0]?.nodeId, null)
+  assert.equal(threads[0]?.anchorId, null)
 })
 
 test('first sync reports every thread as new', () => {

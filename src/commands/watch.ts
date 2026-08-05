@@ -16,12 +16,19 @@ export async function watch(argv: string[]): Promise<void> {
   const args = parseArgs(argv)
   const root = requireRoot()
   const config = loadConfig(root)
-  const token = requireToken()
 
-  const seconds = Number(str(args, '--interval') ?? DEFAULT_INTERVAL_SECONDS)
+  // Validate cheap local input before demanding credentials: a bad --interval
+  // should say so, not send you hunting for a token you did not need yet.
+  const raw = str(args, '--interval')
+  const seconds = raw === null ? DEFAULT_INTERVAL_SECONDS : Number(raw)
   if (!Number.isFinite(seconds) || seconds < 30) {
-    throw new Error('--interval must be at least 30 seconds (Figma rate-limits comments at tier 2).')
+    throw new Error(
+      `--interval must be a number of seconds, at least 30 (got ${JSON.stringify(raw)}).\n` +
+        '  Figma rate-limits comment reads, and polling faster gets you throttled.',
+    )
   }
+
+  const token = requireToken(root)
 
   const label = config.fileName ?? config.fileKey
   console.log(`\n  watching ${label}  ${dim(`· every ${seconds}s · ctrl-c to stop`)}\n`)

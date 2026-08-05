@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { relative } from 'node:path'
 import { has, parseArgs, str } from '../args.ts'
 import { configPath, saveConfig, type Config } from '../config.ts'
-import { parseFileUrl } from '../figma.ts'
+import { parseFileUrl } from '../adapters/figma/url.ts'
 import { dim } from '../term.ts'
 
 export function init(argv: string[]): void {
@@ -22,11 +22,19 @@ export function init(argv: string[]): void {
 
   const fileName = str(args, '--name')
   const preview = str(args, '--preview')
+  const baseBranch = str(args, '--base-branch')
+  const tokenExpiresAt = str(args, '--token-expires')
+  if (tokenExpiresAt && Number.isNaN(Date.parse(tokenExpiresAt))) {
+    throw new Error(`--token-expires "${tokenExpiresAt}" is not a date. Use YYYY-MM-DD.`)
+  }
+
   const { fileKey, fileType } = parseFileUrl(target)
   const config: Config = {
     fileKey,
     ...(fileName ? { fileName } : {}),
     ...(fileType !== 'design' ? { fileType } : {}),
+    ...(baseBranch ? { baseBranch } : {}),
+    ...(tokenExpiresAt ? { tokenExpiresAt } : {}),
     ...(preview ? { preview: { baseUrl: preview } } : {}),
   }
 
@@ -38,5 +46,9 @@ export function init(argv: string[]): void {
     console.log(dim('\n  no preview URL set — add one before using `figflow report`:'))
     console.log(dim('    "preview": { "baseUrl": "https://your-app-git-{branch}.vercel.app" }'))
   }
-  console.log(`\n  next: export FIGMA_TOKEN=figd_… && figflow sync\n`)
+  if (!tokenExpiresAt) {
+    console.log(dim('\n  no token expiry recorded — a lapsed token stops the loop silently:'))
+    console.log(dim('    figflow init … --token-expires YYYY-MM-DD'))
+  }
+  console.log(`\n  next: figflow doctor\n`)
 }

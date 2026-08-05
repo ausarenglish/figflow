@@ -1,7 +1,8 @@
+import { openWriter } from '../adapters/index.ts'
 import { has, parseArgs, str } from '../args.ts'
-import { loadConfig, requireRoot, requireToken } from '../config.ts'
-import { postDevResources, postReaction, postReply } from '../figma-write.ts'
+import { DEFAULT_BASE_BRANCH, loadConfig, requireRoot, requireToken } from '../config.ts'
 import { planReport, type PlannedReport } from '../report-plan.ts'
+import { threadsFromTrailers } from '../trailers.ts'
 import { checkPreview } from '../preview.ts'
 import { currentBranch, findPullRequest, previewBase, pullRequestByNumber, type PullRequest } from '../project.ts'
 import { loadRoutes } from '../routes.ts'
@@ -19,12 +20,41 @@ export async function report(argv: string[]): Promise<void> {
   const branch = str(args, '--branch') ?? currentBranch(root)
   if (!branch) throw new Error('Not on a git branch, and no --branch given.')
 
+  // Three ways a thread gets into a report, in order of explicitness:
+  // named on the command line, marked by `start`, or claimed by a commit
+  // trailer. The last needs no ceremony before the work, which is why it
+  // exists — but it never overrides an explicit argument.
+  const started = Object.entries(state.threads)
+    .filter(([, t]) => t.work?.branch === branch && t.status !== 'resolved' && t.status !== 'gone')
+    .map(([id]) => id)
+
+  const trailers = has(args, '--no-trailers')
+    ? []
+    : threadsFromTrailers(root, config.baseBranch ?? DEFAULT_BASE_BRANCH, str(args, '--since'))
+
+  const fromTrailers = trailers
+    .map((t) => t.threadId)
+    .filter((id) => {
+      const record = state.threads[id]
+      return record && record.status !== 'resolved' && record.status !== 'gone'
+    })
+
   const threadIds =
     args.positionals.length > 0
       ? args.positionals
-      : Object.entries(state.threads)
-          .filter(([, t]) => t.work?.branch === branch && t.status !== 'resolved' && t.status !== 'gone')
-          .map(([id]) => id)
+      : [...new Set([...started, ...fromTrailers])]
+
+  if (args.positionals.length === 0 && fromTrailers.length > 0) {
+    for (const ref of trailers) {
+      if (!fromTrailers.includes(ref.threadId)) continue
+      console.log(dim(`  trailer ${ref.sha}  ${ref.threadId}  ${ref.subject}`))
+    }
+  }
+
+  const unknownTrailers = trailers.filter((t) => !state.threads[t.threadId])
+  for (const ref of unknownTrailers) {
+    console.log(yellow(`  ⚠ commit ${ref.sha} claims thread ${ref.threadId}, which is not in state — run figflow sync`))
+  }
 
   if (threadIds.length === 0) {
     // Interactively this means you mistyped and want to know. On a deploy hook
@@ -37,8 +67,9 @@ export async function report(argv: string[]): Promise<void> {
     }
     throw new Error(
       `No threads marked as work on "${branch}".\n` +
-        '  Mark them first:  figflow start <id...>\n' +
-        '  Or name them:     figflow report <id...>\n' +
+        '  Name them:        figflow report <id...>\n' +
+        '  Or mark them:     figflow start <id...>\n' +
+        '  Or add a trailer to the commit:  Figma: <id>\n' +
         '  In automation:    pass --allow-empty to exit quietly instead.',
     )
   }
@@ -61,7 +92,6 @@ export async function report(argv: string[]): Promise<void> {
   const plan = planReport({
     state,
     routes,
-    fileKey: config.fileKey,
     previewBase: override ? override.replace(/\/+$/, '') : previewBase(template, branch),
     branch,
     pr,
@@ -102,13 +132,14 @@ export async function report(argv: string[]): Promise<void> {
     return
   }
 
-  const token = requireToken()
+  const token = requireToken(root)
+  const writer = openWriter(config, token)
   const now = new Date().toISOString()
 
   for (const item of actionable) {
-    await postReply(config.fileKey, item.threadId, item.message, token)
+    await writer.postReply(item.threadId, item.message)
     try {
-      await postReaction(config.fileKey, item.threadId, token)
+      await writer.postReaction(item.threadId)
     } catch {
       // A duplicate or rejected reaction is not worth failing the run over.
     }
@@ -117,7 +148,7 @@ export async function report(argv: string[]): Promise<void> {
       // reply. Dev resources need Dev Mode, so this 403s on a free plan; that
       // must not abort the run or lose the reports already recorded below.
       try {
-        const res = await postDevResources(item.devResources, token)
+        const res = await writer.pinResources(item.devResources)
         for (const err of res.errors ?? []) console.log(yellow(`      dev resource: ${err.error}`))
       } catch (err) {
         console.log(yellow(`      dev resources not pinned: ${err instanceof Error ? err.message.split('\n')[0] : err}`))

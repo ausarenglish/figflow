@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import type { NodeInfo, Reply, Thread } from './figma.ts'
+import type { Anchor, ReviewReply, ReviewThread } from './adapters/types.ts'
 
 /**
  * Figma owns `resolved` — it is the designer's call and we only read it.
@@ -37,7 +37,7 @@ export type ThreadRecord = {
   firstSeenAt: string
   lastSeenAt: string
   message: string
-  replies: Reply[]
+  replies: ReviewReply[]
   url: string
   work?: WorkRef
   reported?: ReportRef
@@ -48,7 +48,12 @@ export type State = {
   version: 1
   fileKey: string
   lastSyncAt: string | null
-  nodes: Record<string, NodeInfo>
+  /**
+   * Anchor id → its human name. Persisted as `nodes` because that is what the
+   * first adapter called them and the file is committed in real repos; the
+   * core treats them as opaque anchors.
+   */
+  nodes: Record<string, Anchor>
   threads: Record<string, ThreadRecord>
 }
 
@@ -95,9 +100,9 @@ function stableStringify(value: unknown): string {
   )
 }
 
-export function hashThread(thread: Thread): string {
+export function hashThread(thread: ReviewThread): string {
   const payload = [
-    thread.nodeId ?? '',
+    thread.anchorId ?? '',
     thread.message,
     ...thread.replies.map((r) => `${r.id}:${r.message}`),
   ].join(' ')
@@ -122,7 +127,11 @@ function deriveStatus(resolvedAt: string | null, prev: ThreadRecord | undefined)
  * Fold freshly-fetched threads into existing state. Pure: takes and returns
  * plain data so it can be tested without touching the network or disk.
  */
-export function reconcile(state: State, threads: Thread[], now: string): { state: State; delta: Delta } {
+export function reconcile(
+  state: State,
+  threads: ReviewThread[],
+  now: string,
+): { state: State; delta: Delta } {
   const next: State = { ...state, lastSyncAt: now, threads: { ...state.threads } }
   const delta: Delta = { added: [], resolved: [], reopened: [], edited: [], gone: [], staleWork: [] }
   const seen = new Set<string>()
@@ -148,7 +157,8 @@ export function reconcile(state: State, threads: Thread[], now: string): { state
       ...(prev ?? {}),
       status,
       hash,
-      nodeId: thread.nodeId,
+      // The adapter speaks of anchors; the store has always called them nodes.
+      nodeId: thread.anchorId,
       author: thread.author,
       createdAt: thread.createdAt,
       resolvedAt: thread.resolvedAt,

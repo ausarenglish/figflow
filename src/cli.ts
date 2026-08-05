@@ -1,4 +1,5 @@
 import { context } from './commands/context.ts'
+import { doctor } from './commands/doctor.ts'
 import { init } from './commands/init.ts'
 import { issue } from './commands/issue.ts'
 import { open } from './commands/open.ts'
@@ -15,7 +16,9 @@ const HELP = `
 
   ${bold('setup')}
     figflow init <figma-url> [--name "…"] [--preview "https://app-git-{branch}.vercel.app"]
+                                     [--base-branch main] [--token-expires YYYY-MM-DD]
     figflow routes [--init]          map each commented frame to an app path
+    figflow doctor [--offline]       check config, auth, connectivity and state  [--json]
 
   ${bold('daily')}
     figflow sync                     pull comments, show what changed
@@ -32,6 +35,9 @@ const HELP = `
                                      dry run unless --post; checks the preview is up
                                      [--note "…"] [--pr N] [--preview URL] [--skip-check]
                                      [--branch NAME] [--allow-empty]
+                                     picks up threads from start, and from
+                                     "Figma: <id>" commit trailers
+                                     [--since REF] [--no-trailers]
 
   ${dim('FIGMA_TOKEN scopes: file_comments:read, file_content:read')}
   ${dim('                    file_comments:write, file_dev_resources:write  (report only)')}
@@ -55,6 +61,8 @@ export async function main(argv: string[]): Promise<void> {
       return context(args)
     case 'routes':
       return routes(args)
+    case 'doctor':
+      return doctor(args)
     case 'open':
       return open(args)
     case 'issue':

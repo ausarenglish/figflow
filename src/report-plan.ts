@@ -1,4 +1,4 @@
-import type { DevResource } from './figma-write.ts'
+import type { PinnedResource } from './adapters/types.ts'
 import type { PullRequest } from './project.ts'
 import { joinUrl } from './project.ts'
 import type { Routes } from './routes.ts'
@@ -11,7 +11,7 @@ export type PlannedReport = {
   route: string | null
   previewUrl: string
   message: string
-  devResources: DevResource[]
+  devResources: PinnedResource[]
   /** Set when this thread will be left alone, with the reason why. */
   skip: string | null
   stale: boolean
@@ -20,7 +20,6 @@ export type PlannedReport = {
 export type PlanInput = {
   state: State
   routes: Routes
-  fileKey: string
   previewBase: string
   branch: string
   pr: PullRequest | null
@@ -34,7 +33,7 @@ export type PlanInput = {
  * `--post` executes a plan that has already been printed.
  */
 export function planReport(input: PlanInput): PlannedReport[] {
-  const { state, routes, fileKey, previewBase, branch, pr, note } = input
+  const { state, routes, previewBase, branch, pr, note } = input
   const nodesSeen = new Set<string>()
 
   return input.threadIds.map((threadId): PlannedReport => {
@@ -64,19 +63,18 @@ export function planReport(input: PlanInput): PlannedReport[] {
 
     // One dev resource set per frame, not per thread — several comments on the
     // same frame must not pin the same link three times.
-    const devResources: DevResource[] = []
+    const devResources: PinnedResource[] = []
     if (record.nodeId && !nodesSeen.has(record.nodeId)) {
       nodesSeen.add(record.nodeId)
-      devResources.push({ name: 'Preview', url: previewUrl, file_key: fileKey, node_id: record.nodeId })
+      devResources.push({ name: 'Preview', url: previewUrl, anchorId: record.nodeId })
       if (pr?.url) {
-        devResources.push({ name: `PR #${pr.number}`, url: pr.url, file_key: fileKey, node_id: record.nodeId })
+        devResources.push({ name: `PR #${pr.number}`, url: pr.url, anchorId: record.nodeId })
       }
       if (record.issue) {
         devResources.push({
           name: `Issue #${record.issue.number}`,
           url: record.issue.url,
-          file_key: fileKey,
-          node_id: record.nodeId,
+          anchorId: record.nodeId,
         })
       }
     }
@@ -88,14 +86,25 @@ export function planReport(input: PlanInput): PlannedReport[] {
 /**
  * Two independent guards against notifying the designer twice: our own state,
  * and — in case state was lost or reset — the thread's existing replies.
+ *
+ * The state guard keys on the thread hash ALONE, deliberately. It used to also
+ * require the PR and preview URL to match, which meant the same unchanged ask
+ * was reported again the moment the URL changed — exactly what happens when a
+ * branch preview is followed by a production deploy of the same work. With no
+ * PR to fall back on, the reply scan missed it too, and the designer got two
+ * notifications for one piece of work.
+ *
+ * What earns a designer's attention is the ask changing, not the URL changing.
  */
 function alreadyReported(record: ThreadRecord, previewUrl: string, pr: PullRequest | null): string | null {
   const prior = record.reported
-  if (prior && prior.hash === record.hash && prior.pr === (pr?.number ?? null) && prior.url === previewUrl) {
-    return 'already reported — nothing changed since'
+  if (prior && prior.hash === record.hash) {
+    return 'already reported — the comment has not changed since'
   }
-  const marker = pr?.url ?? previewUrl
-  if (record.replies.some((reply) => reply.message.includes(marker))) {
+  // State can be lost, reset, or arrive from another machine mid-rebase. Any
+  // URL we have ever pointed at this thread is evidence we have already spoken.
+  const markers = [previewUrl, pr?.url, prior?.url].filter((m): m is string => Boolean(m))
+  if (record.replies.some((reply) => markers.some((m) => reply.message.includes(m)))) {
     return 'a reply already links this PR/preview'
   }
   return null

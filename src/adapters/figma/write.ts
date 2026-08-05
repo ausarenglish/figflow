@@ -1,8 +1,9 @@
-// Writes to Figma. Deliberately a separate module from figma.ts so that
+// Writes to Figma. Deliberately a separate module from ./read.ts so that
 // "does this code path touch the designer's file?" is answerable by grep.
 //
-// Every caller must pass an explicit `post: true`. Nothing here runs during
-// sync, status, or context.
+// Nothing here runs during sync, status, context or a dry-run report.
+
+import type { PinnedResource, ReviewWriter } from '../types.ts'
 
 const API = 'https://api.figma.com'
 
@@ -14,6 +15,12 @@ async function post<T>(path: string, token: string, body: unknown): Promise<T> {
   })
 
   if (!res.ok) {
+    if (res.status === 401) {
+      throw new Error(
+        'Figma returned 401 on a write — the token is invalid or has expired.\n' +
+          '  Generate a new one and update .env.local and any CI secret.',
+      )
+    }
     if (res.status === 403) {
       throw new Error(
         'Figma returned 403 on a write. FIGMA_TOKEN needs the "file_comments:write"\n' +
@@ -62,4 +69,23 @@ export async function postDevResources(
 ): Promise<{ links_created: unknown[]; errors: { error: string }[] }> {
   if (resources.length === 0) return { links_created: [], errors: [] }
   return post(`/v1/dev_resources`, token, { dev_resources: resources })
+}
+
+export function figmaWriter(fileKey: string, token: string): ReviewWriter {
+  return {
+    kind: 'figma',
+    async postReply(threadId, message) {
+      await postReply(fileKey, threadId, message, token)
+    },
+    async postReaction(threadId) {
+      await postReaction(fileKey, threadId, token)
+    },
+    async pinResources(resources: PinnedResource[]) {
+      const res = await postDevResources(
+        resources.map((r) => ({ name: r.name, url: r.url, file_key: fileKey, node_id: r.anchorId })),
+        token,
+      )
+      return { errors: res.errors ?? [] }
+    },
+  }
 }

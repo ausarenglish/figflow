@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { commentUrl, parseFileKey, parseFileUrl, toThreads, type FigmaComment } from '../src/figma.ts'
+import { toThreads, type FigmaComment } from '../src/adapters/figma/read.ts'
+import { commentUrl, parseFileKey, parseFileUrl } from '../src/adapters/figma/url.ts'
 
 const KEY = 'Xm9FF9sYw7npqhFOIi41Ue'
 

@@ -33,7 +33,6 @@ function plan(state: State, over: Partial<PlanInput> = {}) {
   return planReport({
     state,
     routes: { '1:234': '/services' },
-    fileKey: KEY,
     previewBase: 'https://app-git-fix-cards.vercel.app',
     branch: 'fix/cards',
     pr: PR,
@@ -150,4 +149,80 @@ test('branch names become Vercel-style preview subdomains', () => {
     previewBase('https://oonee-mvp-git-{branch}.vercel.app', 'fix/cards'),
     'https://oonee-mvp-git-fix-cards.vercel.app',
   )
+})
+
+// --- duplicate suppression ------------------------------------------------
+//
+// The tool's central promise is that it cannot notify a designer twice. The
+// guard used to require the PR and preview URL to match as well as the hash,
+// which meant the same unchanged ask was re-reported the moment the URL moved.
+// A branch preview followed by a production deploy of the same work did exactly
+// that, and with no PR the reply scan had no marker to catch it either.
+
+test('the same ask on a new URL is not reported again — preview, then production', () => {
+  const state = stateWith({
+    '1382': {
+      status: 'reported',
+      reported: {
+        at: '2026-08-04T00:00:00Z',
+        hash: 'h1',
+        pr: null,
+        url: 'https://app-git-feat-x.vercel.app/services',
+        branch: 'feat/x',
+      },
+    },
+  })
+  const [item] = plan(state, { pr: null, previewBase: 'https://app.vercel.app', branch: 'main' })
+  assert.match(item?.skip ?? '', /already reported/)
+})
+
+test('nor when the PR appears after the fact', () => {
+  const state = stateWith({
+    '1382': {
+      status: 'reported',
+      reported: {
+        at: '2026-08-04T00:00:00Z',
+        hash: 'h1',
+        pr: null,
+        url: 'https://app-git-fix-cards.vercel.app/services',
+        branch: 'fix/cards',
+      },
+    },
+  })
+  assert.match(plan(state)[0]?.skip ?? '', /already reported/)
+})
+
+test('a reply carrying a URL we previously reported blocks a repeat after state loss', () => {
+  const state = stateWith({
+    '1382': {
+      replies: [
+        {
+          id: '9',
+          author: 'figflow',
+          at: '2026-08-02T00:00:00Z',
+          message: 'Preview: https://app-git-fix-cards.vercel.app/services',
+        },
+      ],
+    },
+  })
+  assert.match(plan(state, { pr: null })[0]?.skip ?? '', /already links/)
+})
+
+test('but a genuinely changed ask still speaks, even on the same URL', () => {
+  const state = stateWith({
+    '1382': {
+      status: 'reported',
+      hash: 'h2',
+      reported: {
+        at: '2026-08-04T00:00:00Z',
+        hash: 'h1',
+        pr: null,
+        url: 'https://app-git-fix-cards.vercel.app/services',
+        branch: 'fix/cards',
+      },
+    },
+  })
+  const [item] = plan(state, { pr: null })
+  assert.equal(item?.skip, null)
+  assert.equal(item?.stale, true)
 })
