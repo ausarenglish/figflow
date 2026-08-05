@@ -82,16 +82,41 @@ async function request<T>(path: string, token: string, method = 'GET'): Promise<
   throw new Error('Figma API rate limit did not clear after 3 attempts')
 }
 
-/** Parse a Figma file key out of a URL, or pass a bare key straight through. */
-export function parseFileKey(input: string): string {
-  const m = input.match(/figma\.com\/(?:file|design|proto|board)\/([A-Za-z0-9]+)/)
-  if (m?.[1]) return m[1]
-  if (/^[A-Za-z0-9]{10,}$/.test(input.trim())) return input.trim()
+/**
+ * Which editor the file opens in. It is part of the URL path, so getting it
+ * wrong sends the designer to a link that does not resolve — and every comment
+ * link we build is one the designer is meant to click.
+ */
+export type FileType = 'design' | 'board' | 'slides'
+
+const URL_SEGMENT: Record<string, FileType> = {
+  design: 'design',
+  file: 'design', // legacy, redirects to /design/
+  proto: 'design',
+  board: 'board', // FigJam
+  slides: 'slides',
+}
+
+/** Parse a Figma file key and editor type out of a URL, or take a bare key. */
+export function parseFileUrl(input: string): { fileKey: string; fileType: FileType } {
+  const m = input.match(/figma\.com\/(file|design|proto|board|slides)\/([A-Za-z0-9]+)/)
+  if (m?.[2]) return { fileKey: m[2], fileType: URL_SEGMENT[m[1] as string] ?? 'design' }
+  if (/^[A-Za-z0-9]{10,}$/.test(input.trim())) return { fileKey: input.trim(), fileType: 'design' }
   throw new Error(`Could not read a Figma file key from: ${input}`)
 }
 
-export function commentUrl(fileKey: string, commentId: string, nodeId: string | null): string {
-  const base = `https://www.figma.com/design/${fileKey}/`
+/** Back-compat shim for callers that only want the key. */
+export function parseFileKey(input: string): string {
+  return parseFileUrl(input).fileKey
+}
+
+export function commentUrl(
+  fileKey: string,
+  commentId: string,
+  nodeId: string | null,
+  fileType: FileType = 'design',
+): string {
+  const base = `https://www.figma.com/${fileType}/${fileKey}/`
   const node = nodeId ? `?node-id=${nodeId.replace(/:/g, '-')}` : ''
   return `${base}${node}#${commentId}`
 }
@@ -107,7 +132,11 @@ export async function fetchComments(fileKey: string, token: string): Promise<Fig
 }
 
 /** Group the flat comment list into threads, roots sorted oldest-first. */
-export function toThreads(fileKey: string, comments: FigmaComment[]): Thread[] {
+export function toThreads(
+  fileKey: string,
+  comments: FigmaComment[],
+  fileType: FileType = 'design',
+): Thread[] {
   const roots = comments.filter((c) => !c.parent_id)
   const repliesBy = new Map<string, FigmaComment[]>()
 
@@ -129,7 +158,7 @@ export function toThreads(fileKey: string, comments: FigmaComment[]): Thread[] {
         message: root.message,
         nodeId,
         orderId: root.order_id,
-        url: commentUrl(fileKey, root.id, nodeId),
+        url: commentUrl(fileKey, root.id, nodeId, fileType),
         replies: (repliesBy.get(root.id) ?? [])
           .sort((a, b) => a.created_at.localeCompare(b.created_at))
           .map((r) => ({

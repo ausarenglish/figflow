@@ -1,8 +1,9 @@
 {
   "name": "figflow",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "Pull Figma comments into local state and emit work packets for an AI agent.",
+  "description": "Carry Figma comments into your repo, and the result back to the designer.",
+  "repository": { "type": "git", "url": "git+https://github.com/ausarenglish/figflow.git" },
   "type": "module",
   "bin": {
     "figflow": "./bin/figflow.mjs"

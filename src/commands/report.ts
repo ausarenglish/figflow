@@ -104,8 +104,15 @@ export async function report(argv: string[]): Promise<void> {
       // A duplicate or rejected reaction is not worth failing the run over.
     }
     if (item.devResources.length > 0) {
-      const res = await postDevResources(item.devResources, token)
-      for (const err of res.errors ?? []) console.log(yellow(`      dev resource: ${err.error}`))
+      // Pinned links are a bonus, not the point — the designer already has the
+      // reply. Dev resources need Dev Mode, so this 403s on a free plan; that
+      // must not abort the run or lose the reports already recorded below.
+      try {
+        const res = await postDevResources(item.devResources, token)
+        for (const err of res.errors ?? []) console.log(yellow(`      dev resource: ${err.error}`))
+      } catch (err) {
+        console.log(yellow(`      dev resources not pinned: ${err instanceof Error ? err.message.split('\n')[0] : err}`))
+      }
     }
 
     const record = state.threads[item.threadId]
@@ -116,16 +123,20 @@ export async function report(argv: string[]): Promise<void> {
         reported: { at: now, hash: record.hash, pr: pr?.number ?? null, url: item.previewUrl, branch },
       }
     }
+    // Persist per thread: a failure on thread 3 must not lose that 1 and 2 were
+    // already told to the designer. Losing that is what causes duplicate pings.
+    saveState(root, state)
     console.log(green(`      posted to ${item.threadId}`))
   }
 
-  saveState(root, state)
   console.log(`\n  ${green(`posted to ${actionable.length} thread${actionable.length === 1 ? '' : 's'}`)}`)
   console.log(`  ${dim('Figma has notified the designer. `figflow sync` picks up their resolve.')}\n`)
 }
 
 function printPlan(plan: PlannedReport[], branch: string, pr: PullRequest | null, posting: boolean): void {
-  const prLabel = pr ? `PR #${pr.number}` : dim('no PR found')
+  // Finding a PR automatically needs `gh`, which is optional. Say what to do
+  // about it rather than just noting the absence.
+  const prLabel = pr ? `PR #${pr.number}` : dim('no PR found — pass --pr N to link one')
   console.log(`\n  ${posting ? bold('posting') : bold('dry run')}  ${dim('·')}  ${branch}  ${dim('·')}  ${prLabel}\n`)
 
   for (const item of plan) {

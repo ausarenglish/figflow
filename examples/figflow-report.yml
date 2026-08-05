@@ -9,7 +9,6 @@
 # Requires:
 #   - secrets.FIGMA_TOKEN with file_comments:write and file_dev_resources:write
 #   - .figflow/state.json committed, with threads already marked via `figflow start`
-#   - figflow reachable — replace the install step once it is published
 
 name: figflow report
 
@@ -36,7 +35,7 @@ jobs:
           node-version: 24
 
       - name: Install figflow
-        run: npm install -g github:YOUR_GH_USER/figflow
+        run: npm install -g github:ausarenglish/figflow
 
       - name: Report to Figma
         env:

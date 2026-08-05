@@ -70,7 +70,7 @@ export async function main(argv: string[]): Promise<void> {
       return
     case '-v':
     case '--version':
-      console.log('0.2.0')
+      console.log('0.3.0')
       return
     default:
       throw new Error(`Unknown command: ${command}\n  Run \`figflow help\`.`)

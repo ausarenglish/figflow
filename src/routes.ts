@@ -38,7 +38,9 @@ export function writeStub(root: string, state: State): { total: number; filled: 
   const lines = ['{']
   anchored.forEach((nodeId, i) => {
     const comma = i === anchored.length - 1 ? '' : ','
-    lines.push(`  "// ${frameLabel(state, nodeId)}": "",`)
+    // The node id rides in the label too: FigJam frames are often all called
+    // "Shape with text", and duplicate JSON keys are not worth shipping.
+    lines.push(`  "// ${frameLabel(state, nodeId)}  ${nodeId}": "",`)
     lines.push(`  ${JSON.stringify(nodeId)}: ${JSON.stringify(existing[nodeId] ?? '')}${comma}`)
   })
   lines.push('}')

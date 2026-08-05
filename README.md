@@ -33,6 +33,10 @@ Figma personal access token — **figma.com → Settings → Security → Person
 | `file_comments:write` | `report` — the reply and the ✅ |
 | `file_dev_resources:write` | `report` — pinning PR/preview to the frame |
 
+Dev resources are a Dev Mode feature, so on a free Figma plan that last one 403s
+even with the scope granted. `report` treats it as optional: the reply and the ✅
+still land, and the run prints `dev resources not pinned` rather than failing.
+
 ```sh
 export FIGMA_TOKEN=figd_…        # or .env.local next to .figflow/
 ```
@@ -42,7 +46,7 @@ Then in the repo the designs belong to:
 ```sh
 figflow init "https://www.figma.com/design/<key>/…" \
   --name "Oonee MVP" \
-  --preview "https://oonee-mvp-git-{branch}.vercel.app"
+  --preview "https://oonee-mvp-git-{branch}-oonee.vercel.app"
 
 figflow sync
 figflow routes --init            # stub listing every commented frame
@@ -51,6 +55,13 @@ $EDITOR .figflow/routes.json     # fill in "/services", "/provider", …
 
 `routes.json` turns "a comment on the Service Card frame" into "look at `/services`
 on the preview". Frames you leave blank still work — the reply links the preview root.
+
+The preview template must match the alias Vercel actually issues, which includes
+the team scope: `{project}-git-{branch}-{scope}.vercel.app`. Get the real one from
+`vercel inspect <any-preview-url> --scope <team>` and read the **Aliases** line —
+guessing it is how you end up sending a designer to a 404. `init` accepts
+`/design/`, `/board/` (FigJam) and `/slides/` URLs and records which, so links back
+to Figma point at the right editor.
 
 ## Daily
 
@@ -68,9 +79,13 @@ figflow report                     # dry run — exact reply, and checks the pre
 figflow report --post              # send it
 ```
 
-`report` with no thread ids picks up everything you `start`ed on the current branch,
-and finds the PR through `gh`. `--note "…"` adds your own line; `--pr N` and
-`--preview URL` override the lookups.
+`report` with no thread ids picks up everything you `start`ed on the current branch.
+`--note "…"` adds your own line; `--pr N` and `--preview URL` override the lookups.
+
+**`gh` is optional.** With it installed, `report` finds the branch's PR by itself.
+Without it, pass `--pr N` — the link is built from your git remote, so it works on
+plain git access with no GitHub CLI. `figflow issue` is the one command that does
+require `gh`.
 
 ## Using it from Claude Code
 
@@ -142,7 +157,7 @@ examples/            GitHub Actions workflow for auto-report on deploy
 docs/RESEARCH.md     API constraints, prior art, what was ruled out
 ```
 
-`npm test` — 24 tests, no network.
+`npm test` — 41 tests, no network.
 
 ## Deliberately not built
 

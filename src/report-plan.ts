@@ -110,7 +110,16 @@ function buildMessage(args: {
 }): string {
   const lines: string[] = []
 
-  lines.push(args.pr ? `✅ Addressed in ${args.pr.title} (#${args.pr.number})` : `✅ Addressed on branch ${args.branch}`)
+  if (args.pr) {
+    // A title only exists when `gh` found the PR for us; --pr N has none.
+    lines.push(
+      args.pr.title
+        ? `✅ Addressed in ${args.pr.title} (#${args.pr.number})`
+        : `✅ Addressed in PR #${args.pr.number}`,
+    )
+  } else {
+    lines.push(`✅ Addressed on branch ${args.branch}`)
+  }
   if (args.note) {
     lines.push('')
     lines.push(args.note)

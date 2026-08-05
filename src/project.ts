@@ -33,16 +33,36 @@ export function findPullRequest(cwd: string, branch: string): PullRequest | null
   }
 }
 
-/** Build a PR reference from a number the user supplied by hand. */
-export function pullRequestByNumber(cwd: string, number: number): PullRequest {
-  const repo = run('gh', ['repo', 'view', '--json', 'url'], cwd)
-  let url = ''
+/**
+ * The repo's web URL, derived from the git remote rather than `gh`. Works with
+ * SSH and HTTPS remotes, and without the GitHub CLI installed at all — which
+ * matters because `gh` is optional here and plain git access is not.
+ */
+export function repoWebUrl(cwd: string, remote = 'origin'): string | null {
+  const raw = run('git', ['remote', 'get-url', remote], cwd)
+  if (!raw) return null
+
+  // git@host:owner/repo.git  →  https://host/owner/repo
+  const ssh = raw.match(/^[^@]+@([^:]+):(.+?)(?:\.git)?$/)
+  if (ssh) return `https://${ssh[1]}/${ssh[2]}`
+
+  // ssh://git@host/owner/repo.git  or  https://host/owner/repo.git
   try {
-    url = repo ? `${(JSON.parse(repo) as { url: string }).url}/pull/${number}` : ''
+    const url = new URL(raw)
+    return `https://${url.host}${url.pathname.replace(/\.git$/, '')}`
   } catch {
-    url = ''
+    return null
   }
-  return { number, title: `PR #${number}`, url }
+}
+
+/**
+ * Build a PR reference from a number the user supplied by hand. The title is
+ * left empty on purpose — we have no way to look it up without `gh`, and an
+ * invented one would read as "Addressed in PR #128 (#128)".
+ */
+export function pullRequestByNumber(cwd: string, number: number): PullRequest {
+  const base = repoWebUrl(cwd)
+  return { number, title: '', url: base ? `${base}/pull/${number}` : '' }
 }
 
 /**

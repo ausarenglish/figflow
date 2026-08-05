@@ -12,7 +12,7 @@ export async function runSync(
   opts: { write?: boolean } = {},
 ): Promise<SyncResult> {
   const comments = await fetchComments(config.fileKey, token)
-  const threads = toThreads(config.fileKey, comments)
+  const threads = toThreads(config.fileKey, comments, config.fileType ?? 'design')
 
   const prior = loadState(root, config.fileKey)
   const anchored = threads.map((t) => t.nodeId).filter((id): id is string => id !== null)

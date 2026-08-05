@@ -1,9 +1,13 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
+import type { FileType } from './figma.ts'
+
 export type Config = {
   fileKey: string
   fileName?: string
+  /** Editor the file opens in — decides the /design/ vs /board/ URL path. */
+  fileType?: FileType
   /** `{branch}` is replaced with the Vercel-style slug of the current branch. */
   preview?: { baseUrl: string }
 }
