@@ -101,8 +101,13 @@ to stop and re-read when a comment was edited after you started.
 notified the moment the preview is genuinely live, not when the code was written.
 It uses the deploy's own `environment_url`, so there's no branch-slug guessing.
 
+Vercel's deployment event carries a commit SHA and an empty payload — no branch
+name anywhere — so the workflow resolves the branch through the commit's PR, which
+returns the PR number in the same call. It passes `--allow-empty`, because most
+pushes have no design threads attached and that is not a failure.
+
 Copy it into the app repo, add `FIGMA_TOKEN` as a secret, and `figflow start` becomes
-the only thing you run by hand.
+the only thing you run by hand. The workflow must be on the default branch to fire.
 
 ## Safety
 

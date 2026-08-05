@@ -27,10 +27,19 @@ export async function report(argv: string[]): Promise<void> {
           .map(([id]) => id)
 
   if (threadIds.length === 0) {
+    // Interactively this means you mistyped and want to know. On a deploy hook
+    // it just means this push had nothing to do with design feedback, which is
+    // most pushes — failing there would turn the workflow red until it is
+    // switched off.
+    if (has(args, '--allow-empty')) {
+      console.log(`\n  ${dim(`no threads marked as work on "${branch}" — nothing to report.`)}\n`)
+      return
+    }
     throw new Error(
       `No threads marked as work on "${branch}".\n` +
         '  Mark them first:  figflow start <id...>\n' +
-        '  Or name them:     figflow report <id...>',
+        '  Or name them:     figflow report <id...>\n' +
+        '  In automation:    pass --allow-empty to exit quietly instead.',
     )
   }
 

@@ -7,7 +7,8 @@
 # is actually up — not when the code was written.
 #
 # Requires:
-#   - secrets.FIGMA_TOKEN with file_comments:write and file_dev_resources:write
+#   - secrets.FIGMA_TOKEN with file_comments:write (and file_dev_resources:write
+#     if you are on a paid Figma plan and want links pinned to the frame)
 #   - .figflow/state.json committed, with threads already marked via `figflow start`
 
 name: figflow report
@@ -26,34 +27,68 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Vercel's deployment event carries a commit SHA and an empty payload —
+      # no branch name anywhere. Resolve it through the commit's PR, which
+      # hands us the branch and the PR number in one call.
+      - name: Resolve branch and PR from the deployed commit
+        id: ctx
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.deployment.sha }}
+        run: |
+          json=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/commits/$SHA/pulls")
+          branch=$(echo "$json" | jq -r '.[0].head.ref // empty')
+          pr=$(echo "$json" | jq -r '.[0].number // empty')
+          if [ -z "$branch" ]; then
+            echo "No PR for $SHA — nothing to report against."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+
+      # Check out the branch, not the SHA: the state commit at the end needs a
+      # branch to push to, and a detached HEAD cannot.
       - uses: actions/checkout@v4
+        if: steps.ctx.outputs.skip != 'true'
         with:
-          ref: ${{ github.event.deployment.ref }}
+          ref: ${{ steps.ctx.outputs.branch }}
 
       - uses: actions/setup-node@v4
+        if: steps.ctx.outputs.skip != 'true'
         with:
           node-version: 24
 
       - name: Install figflow
+        if: steps.ctx.outputs.skip != 'true'
         run: npm install -g github:ausarenglish/figflow
 
       - name: Report to Figma
+        if: steps.ctx.outputs.skip != 'true'
         env:
           FIGMA_TOKEN: ${{ secrets.FIGMA_TOKEN }}
-          GH_TOKEN: ${{ github.token }}
         run: |
           # environment_url is the real deployed URL, so no branch-slug guessing.
+          # --allow-empty: most pushes have no design threads attached, and that
+          # is not a failure.
           figflow report \
-            --branch "${{ github.event.deployment.ref }}" \
+            --branch "${{ steps.ctx.outputs.branch }}" \
+            --pr "${{ steps.ctx.outputs.pr }}" \
             --preview "${{ github.event.deployment_status.environment_url }}" \
+            --allow-empty \
             --post
 
       - name: Commit updated state
+        if: steps.ctx.outputs.skip != 'true'
         run: |
           if [[ -n "$(git status --porcelain .figflow/state.json)" ]]; then
             git config user.name "figflow"
             git config user.email "figflow@users.noreply.github.com"
             git add .figflow/state.json
-            git commit -m "chore(figflow): record reports for ${{ github.event.deployment.ref }}"
+            git commit -m "chore(figflow): record reports for ${{ steps.ctx.outputs.branch }}"
+            # The branch may have moved while the deploy ran.
+            git pull --rebase --autostash origin "${{ steps.ctx.outputs.branch }}"
             git push
           fi

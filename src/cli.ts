@@ -31,6 +31,7 @@ const HELP = `
     figflow report [id…] [--post]    reply + ✅ + pin PR/preview to the frame
                                      dry run unless --post; checks the preview is up
                                      [--note "…"] [--pr N] [--preview URL] [--skip-check]
+                                     [--branch NAME] [--allow-empty]
 
   ${dim('FIGMA_TOKEN scopes: file_comments:read, file_content:read')}
   ${dim('                    file_comments:write, file_dev_resources:write  (report only)')}
