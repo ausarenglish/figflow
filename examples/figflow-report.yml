@@ -28,26 +28,35 @@ jobs:
 
     steps:
       # Vercel's deployment event carries a commit SHA and an empty payload —
-      # no branch name anywhere. Resolve it through the commit's PR, which
-      # hands us the branch and the PR number in one call.
+      # no branch name anywhere.
+      #
+      # Resolve the branch from the commit itself, NOT from its pull request:
+      # plenty of repos merge branches directly and have no PRs at all, and
+      # there the PR lookup skips every deploy forever. A PR, when one exists,
+      # is a bonus that gets the reply a PR link.
       - name: Resolve branch and PR from the deployed commit
         id: ctx
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.event.deployment.sha }}
         run: |
-          json=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/commits/$SHA/pulls")
-          branch=$(echo "$json" | jq -r '.[0].head.ref // empty')
-          pr=$(echo "$json" | jq -r '.[0].number // empty')
+          api() { curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+                    -H "Accept: application/vnd.github+json" "$1"; }
+          REPO="https://api.github.com/repos/${{ github.repository }}"
+
+          branch=$(api "$REPO/commits/$SHA/branches-where-head" | jq -r '.[0].name // empty')
           if [ -z "$branch" ]; then
-            echo "No PR for $SHA — nothing to report against."
+            # The branch moved on after this deploy started, so this build is
+            # already stale. Reporting it would point the designer at old code.
+            echo "$SHA is not the head of any branch — stale deploy, skipping."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
+          pr=$(api "$REPO/commits/$SHA/pulls" | jq -r '.[0].number // empty')
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
           echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          echo "Resolved $SHA → branch '$branch', PR '${pr:-none}'"
 
       # Check out the branch, not the SHA: the state commit at the end needs a
       # branch to push to, and a detached HEAD cannot.
@@ -73,9 +82,11 @@ jobs:
           # environment_url is the real deployed URL, so no branch-slug guessing.
           # --allow-empty: most pushes have no design threads attached, and that
           # is not a failure.
+          PR_ARG=""
+          [ -n "${{ steps.ctx.outputs.pr }}" ] && PR_ARG="--pr ${{ steps.ctx.outputs.pr }}"
           figflow report \
             --branch "${{ steps.ctx.outputs.branch }}" \
-            --pr "${{ steps.ctx.outputs.pr }}" \
+            $PR_ARG \
             --preview "${{ github.event.deployment_status.environment_url }}" \
             --allow-empty \
             --post
