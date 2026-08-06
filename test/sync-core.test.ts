@@ -110,3 +110,70 @@ test('names already in state survive a sync that resolves nothing', async () => 
   assert.deepEqual(asked, [])
   assert.equal(loadState(dir, KEY).nodes['2:1']?.name, 'image 3')
 })
+
+// --- anchor lookup backoff ------------------------------------------------
+//
+// Figma's file-content quota resets in days. A watcher polling every 30s that
+// retries a doomed lookup keeps the quota permanently spent — which is exactly
+// how it got spent in the first place.
+
+function deadSource(threads: ReviewThread[]): { source: ReviewSource; calls: number[] } {
+  const calls: number[] = []
+  return {
+    calls,
+    source: {
+      kind: 'test',
+      label: 'test',
+      async fetchThreads() {
+        return threads
+      },
+      async fetchAnchors(ids: string[]) {
+        calls.push(ids.length)
+        return new Map<string, Anchor>() // quota spent: degrades to empty
+      },
+    },
+  }
+}
+
+test('a failed anchor lookup is not retried on the next poll', async () => {
+  const dir = root()
+  const threads = [thread('1', '2:1')]
+  const { source, calls } = deadSource(threads)
+
+  await runSync(dir, CONFIG, 'tok', { now: '2026-08-05T00:00:00Z', source })
+  await runSync(dir, CONFIG, 'tok', { now: '2026-08-05T00:00:30Z', source })
+  await runSync(dir, CONFIG, 'tok', { now: '2026-08-05T00:01:00Z', source })
+
+  assert.deepEqual(calls, [1], 'tried once, then stayed quiet')
+})
+
+test('it retries once the backoff has elapsed', async () => {
+  const dir = root()
+  const threads = [thread('1', '2:1')]
+  const { source, calls } = deadSource(threads)
+
+  await runSync(dir, CONFIG, 'tok', { now: '2026-08-05T00:00:00Z', source })
+  await runSync(dir, CONFIG, 'tok', { now: '2026-08-05T07:00:00Z', source })
+
+  assert.deepEqual(calls, [1, 1], 'seven hours later it is worth another try')
+})
+
+test('a successful lookup clears any block', async () => {
+  const dir = root()
+  const threads = [thread('1', '2:1')]
+  const dead = deadSource(threads)
+  await runSync(dir, CONFIG, 'tok', { now: '2026-08-05T00:00:00Z', source: dead.source })
+
+  const alive = spySource([...threads, thread('2', '2:2')])
+  await runSync(dir, CONFIG, 'tok', { now: '2026-08-05T07:00:00Z', source: alive.source })
+  const after = loadState(dir, KEY)
+  assert.equal(after.anchorsBlockedUntil, undefined, 'no lingering block once it works')
+  assert.equal(after.nodes['2:1']?.name, 'frame 2:1')
+})
+
+test('polling never stops just because names cannot be resolved', async () => {
+  const dir = root()
+  const { source } = deadSource([thread('1', '2:1')])
+  const result = await runSync(dir, CONFIG, 'tok', { now: '2026-08-05T00:00:00Z', source })
+  assert.equal(result.delta.added.length, 1, 'the comment is still detected')
+})

@@ -49,6 +49,13 @@ export type State = {
   fileKey: string
   lastSyncAt: string | null
   /**
+   * When anchor-name lookups may be attempted again. Figma's file-content
+   * quota resets in days, and a watcher polling every 30s would otherwise
+   * retry a doomed request 2,880 times a day — keeping the quota permanently
+   * exhausted, which is what made it fail in the first place.
+   */
+  anchorsBlockedUntil?: string
+  /**
    * Anchor id → its human name. Persisted as `nodes` because that is what the
    * first adapter called them and the file is committed in real repos; the
    * core treats them as opaque anchors.

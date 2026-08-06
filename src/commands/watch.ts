@@ -63,23 +63,55 @@ function printDelta(state: State, delta: Delta): void {
   console.log('')
 }
 
+/**
+ * Notify on ANY change, not merely the three that used to qualify. A designer
+ * replying to a thread you have not reported yet counted only as `edited`, and
+ * fired nothing — which is the single most useful thing to hear about, since it
+ * is usually a question or a pushback waiting on you.
+ *
+ * One notification per poll, headlined by the most actionable change.
+ */
 function ping(state: State, delta: Delta, label: string): void {
-  if (delta.added.length > 0) {
-    const first = state.threads[delta.added[0] as string]
-    notify(
-      `${delta.added.length} new comment${delta.added.length === 1 ? '' : 's'}`,
-      first ? truncate(first.message.split('\n')[0] ?? '', 120) : label,
-      first ? `${label} · ${frameLabel(state, first.nodeId)}` : label,
-    )
-    return
-  }
-  if (delta.resolved.length > 0) {
-    notify(`${delta.resolved.length} resolved`, `The designer signed off in ${label}.`)
-    return
-  }
-  if (delta.staleWork.length > 0) {
-    notify('A comment changed', `${delta.staleWork.length} thread(s) edited after you started work.`, label)
-  }
+  // Most actionable first: someone is waiting on you, then something is new,
+  // then something merely closed.
+  const ORDER: [keyof Delta, string][] = [
+    ['staleWork', 'changed after you reported'],
+    ['added', 'new'],
+    ['edited', 'updated'],
+    ['reopened', 'reopened'],
+    ['resolved', 'resolved'],
+    ['gone', 'deleted'],
+  ]
+
+  const counted = ORDER.filter(([key]) => delta[key].length > 0)
+  if (counted.length === 0) return
+
+  // `staleWork` is a subset of `edited`; counting both would double-report.
+  const summary = counted
+    .filter(([key]) => !(key === 'edited' && delta.staleWork.length >= delta.edited.length))
+    .map(([key, word]) => `${delta[key].length} ${word}`)
+    .join(' · ')
+
+  const [focusKey] = counted[0] as [keyof Delta, string]
+  const focusId = delta[focusKey][0]
+  const record = focusId ? state.threads[focusId] : undefined
+
+  notify(
+    summary,
+    record ? truncate(latestText(record), 120) : label,
+    record ? `${label} · ${frameLabel(state, record.nodeId)} · @${latestAuthor(record)}` : label,
+  )
+}
+
+/** What actually changed is usually the newest reply, not the original ask. */
+function latestText(record: State['threads'][string]): string {
+  const last = record.replies.at(-1)
+  const text = last ? last.message : record.message
+  return text.split('\n')[0] ?? ''
+}
+
+function latestAuthor(record: State['threads'][string]): string {
+  return record.replies.at(-1)?.author ?? record.author
 }
 
 function truncate(text: string, max: number): string {
