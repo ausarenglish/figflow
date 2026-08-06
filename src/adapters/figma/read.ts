@@ -10,6 +10,21 @@ import { commentUrl, type FileType } from './url.ts'
 
 const API = 'https://api.figma.com'
 
+/**
+ * Longest Retry-After we will actually wait out. Anything beyond this is a
+ * spent daily quota, not a burst limit, and blocking on it is indistinguishable
+ * from a hang.
+ */
+export const MAX_RETRY_WAIT_SECONDS = 60
+
+export function humanDuration(seconds: number): string {
+  if (!Number.isFinite(seconds)) return 'an unknown time'
+  if (seconds < 90) return `${Math.round(seconds)}s`
+  if (seconds < 5400) return `${Math.round(seconds / 60)} minutes`
+  if (seconds < 172_800) return `${Math.round(seconds / 3600)} hours`
+  return `${Math.round(seconds / 86_400)} days`
+}
+
 export type FigmaUser = { id: string; handle: string }
 
 export type FigmaClientMeta =
@@ -42,6 +57,19 @@ async function request<T>(path: string, token: string, method = 'GET'): Promise<
 
     if (res.status === 429) {
       const wait = Number(res.headers.get('Retry-After') ?? 10)
+      // Figma's file-content quota is per-day and, once spent, comes back with
+      // a Retry-After measured in DAYS — 371463 seconds was observed on a free
+      // plan. Sleeping on that is not a retry, it is a hang: `sync` would sit
+      // there silently until the process was killed. Above the cap, fail with
+      // something a human can act on.
+      if (!Number.isFinite(wait) || wait > MAX_RETRY_WAIT_SECONDS) {
+        throw new Error(
+          `Figma rate limit exhausted for ${path.split('?')[0]}.\n` +
+            `  It resets in ${humanDuration(wait)}. This is a per-file quota, and\n` +
+            '  reading node names burns it far faster than reading comments.\n' +
+            '  Comments still read fine — sync will fall back to bare node ids.',
+        )
+      }
       process.stderr.write(`  rate limited, waiting ${wait}s…\n`)
       await new Promise((r) => setTimeout(r, wait * 1000))
       continue

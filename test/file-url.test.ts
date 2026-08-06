@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { toThreads, type FigmaComment } from '../src/adapters/figma/read.ts'
+import { MAX_RETRY_WAIT_SECONDS, humanDuration, toThreads, type FigmaComment } from '../src/adapters/figma/read.ts'
 import { commentUrl, parseFileKey, parseFileUrl } from '../src/adapters/figma/url.ts'
 
 const KEY = 'Xm9FF9sYw7npqhFOIi41Ue'
@@ -63,4 +63,25 @@ test('threads built from a board carry board URLs through to state', () => {
   ]
   const [thread] = toThreads(KEY, raw, 'board')
   assert.ok(thread?.url.includes('/board/'), thread?.url)
+})
+
+// --- rate limiting --------------------------------------------------------
+//
+// Figma's file-content quota returns a Retry-After measured in days once spent
+// (371463 seconds observed on a free plan). Sleeping on that is a hang, and
+// `sync` would sit silently until killed.
+
+test('a retry-after beyond the cap is described in human terms', () => {
+  assert.equal(humanDuration(30), '30s')
+  assert.equal(humanDuration(600), '10 minutes')
+  assert.equal(humanDuration(7200), '2 hours')
+  assert.equal(humanDuration(371463), '4 days')
+})
+
+test('the wait cap is short enough to never look like a hang', () => {
+  assert.ok(MAX_RETRY_WAIT_SECONDS <= 60)
+})
+
+test('a nonsense retry-after does not become a NaN sleep', () => {
+  assert.equal(humanDuration(Number.NaN), 'an unknown time')
 })
