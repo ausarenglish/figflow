@@ -60,6 +60,20 @@ function printDelta(state: State, delta: Delta): void {
   for (const id of delta.resolved) console.log(green(`    ✓ ${id} resolved`))
   for (const id of delta.reopened) console.log(yellow(`    ↺ ${id} reopened`))
   for (const id of delta.staleWork) console.log(yellow(`    ⚠ ${id} edited after you started work`))
+
+  // Plain edits — usually a designer replying to a thread we have not reported
+  // — were detected but never printed, so the log showed a bare timestamp with
+  // nothing under it. Show the reply, since that is the part worth reading.
+  const stale = new Set(delta.staleWork)
+  for (const id of delta.edited) {
+    if (stale.has(id)) continue
+    const record = state.threads[id]
+    if (!record) continue
+    const reply = record.replies.at(-1)
+    console.log(yellow(`    ✎ ${id}  `) + dim(`${frameLabel(state, record.nodeId)} · @${reply?.author ?? record.author}`))
+    console.log(`      ${truncate((reply?.message ?? record.message).split('\n')[0] ?? '', 88)}`)
+  }
+  for (const id of delta.gone) console.log(yellow(`    ⚠ ${id} deleted from the file`))
   console.log('')
 }
 
