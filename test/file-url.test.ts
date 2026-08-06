@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { MAX_RETRY_WAIT_SECONDS, humanDuration, toThreads, type FigmaComment } from '../src/adapters/figma/read.ts'
+import { backoffFor } from '../src/adapters/figma/write.ts'
 import { commentUrl, parseFileKey, parseFileUrl } from '../src/adapters/figma/url.ts'
 
 const KEY = 'Xm9FF9sYw7npqhFOIi41Ue'
@@ -84,4 +85,37 @@ test('the wait cap is short enough to never look like a hang', () => {
 
 test('a nonsense retry-after does not become a NaN sleep', () => {
   assert.equal(humanDuration(Number.NaN), 'an unknown time')
+})
+
+// --- write-side rate limiting ---------------------------------------------
+//
+// Figma refuses comment writes in bursts — a 13-thread batch died partway
+// through with "Rate limit exceeded", leaving seven designers untold. The read
+// client always retried; the write client did not.
+
+test('backoff honours Retry-After when Figma supplies one', () => {
+  assert.equal(backoffFor(0, 7), 7)
+  assert.equal(backoffFor(3, 12), 12)
+})
+
+test('backoff escalates when Figma supplies no header', () => {
+  const waits = [0, 1, 2, 3, 4].map((a) => backoffFor(a, null))
+  assert.deepEqual(waits, [2, 5, 10, 20, 40])
+  for (let i = 1; i < waits.length; i++) {
+    assert.ok((waits[i] as number) > (waits[i - 1] as number), 'each wait is longer than the last')
+  }
+})
+
+test('backoff never exceeds the per-attempt cap', () => {
+  assert.equal(backoffFor(0, 3600), 60)
+})
+
+test('a nonsense or absent Retry-After falls back to the schedule', () => {
+  assert.equal(backoffFor(0, Number.NaN), 2)
+  assert.equal(backoffFor(0, 0), 2)
+  assert.equal(backoffFor(0, -5), 2)
+})
+
+test('backoff is defined for attempts beyond the schedule', () => {
+  assert.equal(backoffFor(99, null), 40)
 })

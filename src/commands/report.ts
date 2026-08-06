@@ -136,6 +136,13 @@ export async function report(argv: string[]): Promise<void> {
   const writer = openWriter(config, token)
   const now = new Date().toISOString()
 
+  // Dev resources are all-or-nothing per plan, so one refusal settles it.
+  let pinning = true
+  const stopPinning = (): boolean => {
+    console.log(dim('      (not attempting to pin links on the remaining threads)'))
+    return false
+  }
+
   for (const item of actionable) {
     await writer.postReply(item.threadId, item.message)
     try {
@@ -143,15 +150,23 @@ export async function report(argv: string[]): Promise<void> {
     } catch {
       // A duplicate or rejected reaction is not worth failing the run over.
     }
-    if (item.devResources.length > 0) {
+    if (item.devResources.length > 0 && pinning) {
       // Pinned links are a bonus, not the point — the designer already has the
-      // reply. Dev resources need Dev Mode, so this 403s on a free plan; that
+      // reply. Dev resources need Dev Mode, so this fails on a free plan; that
       // must not abort the run or lose the reports already recorded below.
+      //
+      // And once it has failed, it will fail identically for every remaining
+      // thread. Retrying anyway spent a third of the run's request budget on
+      // calls that could not succeed, which is what pushed a 13-thread batch
+      // into Figma's write rate limit. Give up after the first refusal.
       try {
         const res = await writer.pinResources(item.devResources)
-        for (const err of res.errors ?? []) console.log(yellow(`      dev resource: ${err.error}`))
+        const errors = res.errors ?? []
+        for (const err of errors) console.log(yellow(`      dev resource: ${err.error}`))
+        if (errors.length > 0) pinning = stopPinning()
       } catch (err) {
         console.log(yellow(`      dev resources not pinned: ${err instanceof Error ? err.message.split('\n')[0] : err}`))
+        pinning = stopPinning()
       }
     }
 
