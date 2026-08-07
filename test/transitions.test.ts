@@ -135,3 +135,52 @@ test('the whole fixture file folds to a stable set of statuses', () => {
   )
   assert.equal(Object.keys(final.threads).length, 4, 'replies are folded in, not counted as threads')
 })
+
+// --- change descriptions (what a notification says) ------------------------
+
+import { describeChange } from '../src/commands/watch.ts'
+
+const EMPTY_DELTA: Delta = { added: [], resolved: [], reopened: [], edited: [], gone: [], staleWork: [] }
+
+function described(over: Partial<Delta>, threads = FIXTURE_COMMENTS) {
+  const state = replay([threads]).final
+  return describeChange(state, { ...EMPTY_DELTA, ...over }, 'Oonee board')
+}
+
+test('no change describes nothing, so no notification fires', () => {
+  assert.equal(described({}), null)
+})
+
+// The bug: a designer replying to a thread we had not reported counted only as
+// `edited`, and `edited` fired no notification at all.
+test('a plain edit still produces a notification', () => {
+  const c = described({ edited: ['1858203148'] })
+  assert.ok(c)
+  assert.match(c.summary, /1 updated/)
+})
+
+test('the newest reply is quoted, not the original ask', () => {
+  const c = described({ edited: ['1858203148'] })
+  assert.match(c?.detail ?? '', /Editing matters more than cancelling/)
+  assert.match(c?.context ?? '', /@Marco/)
+})
+
+test('work changed after reporting outranks everything else', () => {
+  const c = described({ staleWork: ['1858203401'], resolved: ['1858204600'], added: ['1858199014'] })
+  assert.match(c?.summary ?? '', /^1 changed after you reported/)
+})
+
+test('staleWork is not double-counted as an edit', () => {
+  const c = described({ edited: ['1858203401'], staleWork: ['1858203401'] })
+  assert.equal(c?.summary, '1 changed after you reported')
+})
+
+test('several kinds of change are all named', () => {
+  const c = described({ added: ['1858199014'], resolved: ['1858204600'] })
+  assert.match(c?.summary ?? '', /1 new/)
+  assert.match(c?.summary ?? '', /1 resolved/)
+})
+
+test('resolutions alone still notify', () => {
+  assert.match(described({ resolved: ['1858203401'] })?.summary ?? '', /1 resolved/)
+})

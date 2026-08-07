@@ -2,6 +2,7 @@ import type { PinnedResource } from './adapters/types.ts'
 import type { PullRequest } from './project.ts'
 import { joinUrl } from './project.ts'
 import type { Routes } from './routes.ts'
+import { shotFor, type Shots } from './shots.ts'
 import { frameLabel, isStale, type State, type ThreadRecord } from './state.ts'
 
 export type PlannedReport = {
@@ -10,6 +11,10 @@ export type PlannedReport = {
   nodeId: string | null
   route: string | null
   previewUrl: string
+  /** An image of this screen, for reviewers who cannot sign in. */
+  shotUrl: string | null
+  /** True when the preview redirects to a sign-in page. Set by `report`. */
+  previewGated: boolean
   message: string
   devResources: PinnedResource[]
   /** Set when this thread will be left alone, with the reason why. */
@@ -20,6 +25,7 @@ export type PlannedReport = {
 export type PlanInput = {
   state: State
   routes: Routes
+  shots?: Shots
   previewBase: string
   branch: string
   pr: PullRequest | null
@@ -34,6 +40,7 @@ export type PlanInput = {
  */
 export function planReport(input: PlanInput): PlannedReport[] {
   const { state, routes, previewBase, branch, pr, note } = input
+  const shots = input.shots ?? {}
   const nodesSeen = new Set<string>()
 
   return input.threadIds.map((threadId): PlannedReport => {
@@ -41,6 +48,7 @@ export function planReport(input: PlanInput): PlannedReport[] {
     const frame = record ? frameLabel(state, record.nodeId) : threadId
     const route = record?.nodeId ? (routes[record.nodeId] ?? null) : null
     const previewUrl = joinUrl(previewBase, route)
+    const shotUrl = shotFor(shots, route)
 
     const base: PlannedReport = {
       threadId,
@@ -48,7 +56,9 @@ export function planReport(input: PlanInput): PlannedReport[] {
       nodeId: record?.nodeId ?? null,
       route,
       previewUrl,
-      message: buildMessage({ pr, branch, note, previewUrl, issue: record?.issue ?? null }),
+      shotUrl,
+      previewGated: false,
+      message: buildMessage({ pr, branch, note, previewUrl, shotUrl, previewGated: false, issue: record?.issue ?? null }),
       devResources: [],
       skip: null,
       stale: record ? isStale(record) : false,
@@ -110,11 +120,13 @@ function alreadyReported(record: ThreadRecord, previewUrl: string, pr: PullReque
   return null
 }
 
-function buildMessage(args: {
+export function buildMessage(args: {
   pr: PullRequest | null
   branch: string
   note: string | null
   previewUrl: string
+  shotUrl?: string | null
+  previewGated?: boolean
   issue: { number: number; url: string } | null
 }): string {
   const lines: string[] = []
@@ -134,7 +146,14 @@ function buildMessage(args: {
     lines.push(args.note)
   }
   lines.push('')
-  lines.push(`Preview: ${args.previewUrl}`)
+  // The screenshot comes first when the preview needs an account: it is the
+  // thing the reviewer can actually open.
+  if (args.shotUrl) lines.push(`Screenshot: ${args.shotUrl}`)
+  lines.push(
+    args.previewGated
+      ? `Preview (needs a sign-in): ${args.previewUrl}`
+      : `Preview: ${args.previewUrl}`,
+  )
   if (args.pr?.url) lines.push(`PR: ${args.pr.url}`)
   if (args.issue) lines.push(`Issue: ${args.issue.url}`)
   lines.push('')

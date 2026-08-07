@@ -23,6 +23,7 @@ const HELP = `
   ${bold('daily')}
     figflow sync                     pull comments, show what changed
     figflow watch [--interval 300]   poll, and ping you when a comment lands
+                                     [--on-change "cmd"]  run cmd on any change
     figflow status [--all]           threads grouped by frame
     figflow context <id…> | --open   work packet for an agent  [--json]
     figflow open <id> [--preview]    open the thread (or its preview) in a browser

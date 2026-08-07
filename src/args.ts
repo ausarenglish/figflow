@@ -14,6 +14,7 @@ const VALUE_FLAGS = new Set([
   '--label',
   '--name',
   '--note',
+  '--on-change',
   '--pr',
   '--preview',
   '--since',

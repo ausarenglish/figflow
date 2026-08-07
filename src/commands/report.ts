@@ -1,11 +1,12 @@
 import { openWriter } from '../adapters/index.ts'
 import { has, parseArgs, str } from '../args.ts'
 import { DEFAULT_BASE_BRANCH, loadConfig, requireRoot, requireToken } from '../config.ts'
-import { planReport, type PlannedReport } from '../report-plan.ts'
+import { buildMessage, planReport, type PlannedReport } from '../report-plan.ts'
 import { threadsFromTrailers } from '../trailers.ts'
 import { checkPreview } from '../preview.ts'
 import { currentBranch, findPullRequest, previewBase, pullRequestByNumber, type PullRequest } from '../project.ts'
 import { loadRoutes } from '../routes.ts'
+import { loadShots } from '../shots.ts'
 import { loadState, saveState } from '../state.ts'
 import { bold, dim, green, yellow } from '../term.ts'
 
@@ -15,6 +16,7 @@ export async function report(argv: string[]): Promise<void> {
   const config = loadConfig(root)
   const state = loadState(root, config.fileKey)
   const routes = loadRoutes(root)
+  const shots = loadShots(root)
 
   const shouldPost = has(args, '--post')
   const branch = str(args, '--branch') ?? currentBranch(root)
@@ -92,6 +94,7 @@ export async function report(argv: string[]): Promise<void> {
   const plan = planReport({
     state,
     routes,
+    shots,
     previewBase: override ? override.replace(/\/+$/, '') : previewBase(template, branch),
     branch,
     pr,
@@ -99,10 +102,9 @@ export async function report(argv: string[]): Promise<void> {
     threadIds,
   })
 
-  printPlan(plan, branch, pr, shouldPost)
-
   const actionable = plan.filter((item) => item.skip === null)
   if (actionable.length === 0) {
+    printPlan(plan, branch, pr, shouldPost)
     console.log(`  ${dim('nothing to post.')}\n`)
     return
   }
@@ -111,21 +113,53 @@ export async function report(argv: string[]): Promise<void> {
   // opening them.
   if (!has(args, '--skip-check')) {
     const urls = [...new Set(actionable.map((item) => item.previewUrl))]
+    const verdicts = new Map<string, Awaited<ReturnType<typeof checkPreview>>>()
+    for (const url of urls) verdicts.set(url, await checkPreview(url))
+
     let blocked = false
-    for (const url of urls) {
-      const check = await checkPreview(url)
-      const line = `    ${check.ok ? green('✓') : yellow('✗')} ${url}  ${dim(check.reason)}`
-      console.log(line)
+    for (const item of actionable) {
+      const check = verdicts.get(item.previewUrl)
+      if (!check) continue
+
+      // A sign-in wall is not fatal IF a screenshot of this screen exists: the
+      // reviewer has something they can actually open. Without one, it is the
+      // same failure as a dead link — worse, because the page looks healthy.
+      const gated = check.redirectedTo !== undefined && !check.ok
+      if (gated && item.shotUrl) {
+        item.previewGated = true
+        item.message = buildMessage({
+          pr, branch, note: str(args, '--note'),
+          previewUrl: item.previewUrl, shotUrl: item.shotUrl, previewGated: true,
+          issue: state.threads[item.threadId]?.issue ?? null,
+        })
+        continue
+      }
       if (!check.ok) blocked = true
     }
+
+    for (const [url, check] of verdicts) {
+      const covered = actionable.filter((i) => i.previewUrl === url).every((i) => i.previewGated || check.ok)
+      const mark = check.ok ? green('✓') : covered ? yellow('!') : yellow('✗')
+      const extra = !check.ok && covered ? dim('  — screenshot supplied instead') : ''
+      console.log(`    ${mark} ${url}  ${dim(check.reason)}${extra}`)
+    }
     console.log('')
+
     if (blocked) {
       throw new Error(
-        'The preview is not reachable, so nothing was posted.\n' +
-          '  Wait for the deploy, pass --preview <url>, or --skip-check to post anyway.',
+        'The preview is not usable, so nothing was posted.\n' +
+          '  If it redirects to a sign-in page, a reviewer without an account sees a login\n' +
+          '  form rather than the screen. Add an image of it to .figflow/shots.json:\n' +
+          '      { "/bookings": "https://…/bookings.png" }\n' +
+          '  Or wait for the deploy, pass --preview <url>, or --skip-check to post anyway.',
       )
     }
   }
+
+  // Printed only now: the preview check can rewrite a message (to mark the
+  // preview as needing a sign-in), and a dry run that shows different text
+  // from what gets posted is worse than no dry run at all.
+  printPlan(plan, branch, pr, shouldPost)
 
   if (!shouldPost) {
     console.log(`  ${bold('nothing was posted.')} re-run with ${bold('--post')} to send it.\n`)

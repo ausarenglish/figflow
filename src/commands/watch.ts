@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { parseArgs, str } from '../args.ts'
 import { loadConfig, requireRoot, requireToken } from '../config.ts'
 import { notify } from '../notify.ts'
@@ -28,10 +29,13 @@ export async function watch(argv: string[]): Promise<void> {
     )
   }
 
+  const onChange = str(args, '--on-change')
   const token = requireToken(root)
 
   const label = config.fileName ?? config.fileKey
-  console.log(`\n  watching ${label}  ${dim(`· every ${seconds}s · ctrl-c to stop`)}\n`)
+  console.log(
+    `\n  watching ${label}  ${dim(`· every ${seconds}s${onChange ? ' · on-change hook set' : ''} · ctrl-c to stop`)}\n`,
+  )
 
   for (;;) {
     try {
@@ -40,6 +44,8 @@ export async function watch(argv: string[]): Promise<void> {
         console.log(dim(`  ${new Date().toTimeString().slice(0, 8)}`))
         printDelta(state, delta)
         ping(state, delta, label)
+        const change = describeChange(state, delta, label)
+        if (onChange && change) runHook(onChange, change, config.fileKey)
       }
     } catch (err) {
       console.log(yellow(`  ${new Date().toTimeString().slice(0, 8)}  sync failed: ${err instanceof Error ? err.message : err}`))
@@ -77,15 +83,16 @@ function printDelta(state: State, delta: Delta): void {
   console.log('')
 }
 
+export type ChangeSummary = { summary: string; detail: string; context: string }
+
 /**
- * Notify on ANY change, not merely the three that used to qualify. A designer
- * replying to a thread you have not reported yet counted only as `edited`, and
+ * Describe a delta once, for both the desktop notification and the --on-change
+ * hook. Any change qualifies, not merely the three that used to: a designer
+ * replying to a thread you have not reported yet counted only as `edited` and
  * fired nothing — which is the single most useful thing to hear about, since it
  * is usually a question or a pushback waiting on you.
- *
- * One notification per poll, headlined by the most actionable change.
  */
-function ping(state: State, delta: Delta, label: string): void {
+export function describeChange(state: State, delta: Delta, label: string): ChangeSummary | null {
   // Most actionable first: someone is waiting on you, then something is new,
   // then something merely closed.
   const ORDER: [keyof Delta, string][] = [
@@ -98,7 +105,7 @@ function ping(state: State, delta: Delta, label: string): void {
   ]
 
   const counted = ORDER.filter(([key]) => delta[key].length > 0)
-  if (counted.length === 0) return
+  if (counted.length === 0) return null
 
   // `staleWork` is a subset of `edited`; counting both would double-report.
   const summary = counted
@@ -110,11 +117,16 @@ function ping(state: State, delta: Delta, label: string): void {
   const focusId = delta[focusKey][0]
   const record = focusId ? state.threads[focusId] : undefined
 
-  notify(
+  return {
     summary,
-    record ? truncate(latestText(record), 120) : label,
-    record ? `${label} · ${frameLabel(state, record.nodeId)} · @${latestAuthor(record)}` : label,
-  )
+    detail: record ? truncate(latestText(record), 200) : label,
+    context: record ? `${label} · ${frameLabel(state, record.nodeId)} · @${latestAuthor(record)}` : label,
+  }
+}
+
+function ping(state: State, delta: Delta, label: string): void {
+  const change = describeChange(state, delta, label)
+  if (change) notify(change.summary, change.detail, change.context)
 }
 
 /** What actually changed is usually the newest reply, not the original ask. */
@@ -126,6 +138,30 @@ function latestText(record: State['threads'][string]): string {
 
 function latestAuthor(record: State['threads'][string]): string {
   return record.replies.at(-1)?.author ?? record.author
+}
+
+/**
+ * Run an arbitrary command when something changes. figflow stays ignorant of
+ * email, Slack, SMS and everything else — it hands the facts to a command and
+ * lets the caller route them. A notifier must never be able to kill the loop,
+ * so a failing hook is logged and polling continues.
+ */
+function runHook(command: string, change: ChangeSummary, fileKey: string): void {
+  try {
+    execFileSync('/bin/sh', ['-c', command], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      timeout: 20_000,
+      env: {
+        ...process.env,
+        FIGFLOW_SUMMARY: change.summary,
+        FIGFLOW_DETAIL: change.detail,
+        FIGFLOW_CONTEXT: change.context,
+        FIGFLOW_FILE_KEY: fileKey,
+      },
+    })
+  } catch (err) {
+    console.log(yellow(`    on-change hook failed: ${err instanceof Error ? err.message.split('\n')[0] : err}`))
+  }
 }
 
 function truncate(text: string, max: number): string {
