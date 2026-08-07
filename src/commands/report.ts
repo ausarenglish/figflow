@@ -4,7 +4,7 @@ import { DEFAULT_BASE_BRANCH, loadConfig, requireRoot, requireToken } from '../c
 import { buildMessage, planReport, type PlannedReport } from '../report-plan.ts'
 import { threadsFromTrailers } from '../trailers.ts'
 import { checkPreview } from '../preview.ts'
-import { currentBranch, findPullRequest, previewBase, pullRequestByNumber, type PullRequest } from '../project.ts'
+import { currentBranch, findPullRequest, lastAppChangeAt, previewBase, pullRequestByNumber, type PullRequest } from '../project.ts'
 import { loadRoutes } from '../routes.ts'
 import { loadShots } from '../shots.ts'
 import { loadState, saveState } from '../state.ts'
@@ -95,6 +95,7 @@ export async function report(argv: string[]): Promise<void> {
     state,
     routes,
     shots,
+    workCommittedAt: lastAppChangeAt(root),
     previewBase: override ? override.replace(/\/+$/, '') : previewBase(template, branch),
     branch,
     pr,
@@ -125,6 +126,29 @@ export async function report(argv: string[]): Promise<void> {
       // reviewer has something they can actually open. Without one, it is the
       // same failure as a dead link — worse, because the page looks healthy.
       const gated = check.redirectedTo !== undefined && !check.ok
+
+      // A stale screenshot is worse than none: it is a picture of the old
+      // screen offered as proof of the new one. When the preview works, the
+      // preview is the evidence and a stale image is only noise — warn. When
+      // the preview is gated, the image is the ONLY evidence, so a stale one
+      // means we cannot show the designer anything true. Refuse.
+      if (item.shotUrl && item.shotStale) {
+        console.log(
+          yellow(`    ⚠ ${item.threadId}  screenshot for ${item.route ?? '/'} predates this commit`),
+        )
+        if (gated) {
+          blocked = true
+          continue
+        }
+        item.shotUrl = null
+        item.message = buildMessage({
+          pr, branch, note: str(args, '--note'),
+          previewUrl: item.previewUrl, shotUrl: null, previewGated: false,
+          issue: state.threads[item.threadId]?.issue ?? null,
+        })
+        continue
+      }
+
       if (gated && item.shotUrl) {
         item.previewGated = true
         item.message = buildMessage({
@@ -149,8 +173,10 @@ export async function report(argv: string[]): Promise<void> {
       throw new Error(
         'The preview is not usable, so nothing was posted.\n' +
           '  If it redirects to a sign-in page, a reviewer without an account sees a login\n' +
-          '  form rather than the screen. Add an image of it to .figflow/shots.json:\n' +
-          '      { "/bookings": "https://…/bookings.png" }\n' +
+          '  form rather than the screen. Add a current image of it to .figflow/shots.json:\n' +
+          '      { "/bookings": { "url": "https://…", "capturedAt": "2026-08-07T10:00:00Z" } }\n' +
+          '  If a screenshot is flagged as predating this commit, re-capture it — an old\n' +
+          '  picture of a changed screen is the thing this check exists to stop.\n' +
           '  Or wait for the deploy, pass --preview <url>, or --skip-check to post anyway.',
       )
     }

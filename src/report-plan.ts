@@ -2,7 +2,7 @@ import type { PinnedResource } from './adapters/types.ts'
 import type { PullRequest } from './project.ts'
 import { joinUrl } from './project.ts'
 import type { Routes } from './routes.ts'
-import { shotFor, type Shots } from './shots.ts'
+import { isStaleShot, shotFor, type Shots } from './shots.ts'
 import { frameLabel, isStale, type State, type ThreadRecord } from './state.ts'
 
 export type PlannedReport = {
@@ -13,6 +13,8 @@ export type PlannedReport = {
   previewUrl: string
   /** An image of this screen, for reviewers who cannot sign in. */
   shotUrl: string | null
+  /** The image predates the work it is meant to show, or carries no date. */
+  shotStale: boolean
   /** True when the preview redirects to a sign-in page. Set by `report`. */
   previewGated: boolean
   message: string
@@ -26,6 +28,8 @@ export type PlanInput = {
   state: State
   routes: Routes
   shots?: Shots
+  /** ISO time of the commit being reported, for screenshot freshness. */
+  workCommittedAt?: string | null
   previewBase: string
   branch: string
   pr: PullRequest | null
@@ -48,7 +52,9 @@ export function planReport(input: PlanInput): PlannedReport[] {
     const frame = record ? frameLabel(state, record.nodeId) : threadId
     const route = record?.nodeId ? (routes[record.nodeId] ?? null) : null
     const previewUrl = joinUrl(previewBase, route)
-    const shotUrl = shotFor(shots, route)
+    const shot = shotFor(shots, route)
+    const shotUrl = shot?.url ?? null
+    const shotStale = isStaleShot(shot, input.workCommittedAt ?? null)
 
     const base: PlannedReport = {
       threadId,
@@ -57,6 +63,7 @@ export function planReport(input: PlanInput): PlannedReport[] {
       route,
       previewUrl,
       shotUrl,
+      shotStale,
       previewGated: false,
       message: buildMessage({ pr, branch, note, previewUrl, shotUrl, previewGated: false, issue: record?.issue ?? null }),
       devResources: [],

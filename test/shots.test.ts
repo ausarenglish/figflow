@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { buildMessage } from '../src/report-plan.ts'
-import { loadShots, shotFor } from '../src/shots.ts'
+import { isStaleShot, loadShots, shotFor } from '../src/shots.ts'
 
 function project(shots?: unknown): string {
   const dir = mkdtempSync(join(tmpdir(), 'figflow-shots-'))
@@ -21,7 +21,7 @@ test('no shots file is not an error', () => {
 
 test('routes map to image urls', () => {
   const shots = loadShots(project({ '/bookings': 'https://x/bookings.png' }))
-  assert.equal(shots['/bookings'], 'https://x/bookings.png')
+  assert.equal(shots['/bookings']?.url, 'https://x/bookings.png')
 })
 
 test('blank entries and comment keys are ignored, like routes.json', () => {
@@ -31,17 +31,60 @@ test('blank entries and comment keys are ignored, like routes.json', () => {
 
 test('a trailing slash does not hide a screenshot', () => {
   const shots = loadShots(project({ '/places/': 'https://x/places.png' }))
-  assert.equal(shotFor(shots, '/places'), 'https://x/places.png')
-  assert.equal(shotFor(shots, '/places/'), 'https://x/places.png')
+  assert.equal(shotFor(shots, '/places')?.url, 'https://x/places.png')
+  assert.equal(shotFor(shots, '/places/')?.url, 'https://x/places.png')
 })
 
 test('an unanchored thread falls back to the root screenshot', () => {
-  const shots = { '/': 'https://x/home.png' }
-  assert.equal(shotFor(shots, null), 'https://x/home.png')
+  assert.equal(shotFor({ '/': { url: 'https://x/home.png' } }, null)?.url, 'https://x/home.png')
 })
 
 test('a route with no screenshot returns null rather than guessing', () => {
-  assert.equal(shotFor({ '/a': 'https://x/a.png' }, '/b'), null)
+  assert.equal(shotFor({ '/a': { url: 'https://x/a.png' } }, '/b'), null)
+})
+
+// --- freshness ------------------------------------------------------------
+//
+// A screenshot taken before the work it claims to show is a picture of the old
+// screen presented as proof of the new one — the same lie as a dead link, in a
+// form that looks more convincing.
+
+test('a screenshot older than the work is stale', () => {
+  const shot = { url: 'https://x/a.png', capturedAt: '2026-08-01T00:00:00Z' }
+  assert.equal(isStaleShot(shot, '2026-08-06T00:00:00Z'), true)
+})
+
+test('a screenshot taken after the work is fresh', () => {
+  const shot = { url: 'https://x/a.png', capturedAt: '2026-08-07T00:00:00Z' }
+  assert.equal(isStaleShot(shot, '2026-08-06T00:00:00Z'), false)
+})
+
+test('an undated screenshot is treated as stale, not trusted', () => {
+  assert.equal(isStaleShot({ url: 'https://x/a.png' }, '2026-08-06T00:00:00Z'), true)
+})
+
+test('a plain string entry still loads, and counts as undated', () => {
+  const shots = loadShots(project({ '/a': 'https://x/a.png' }))
+  assert.equal(shots['/a']?.url, 'https://x/a.png')
+  assert.equal(isStaleShot(shots['/a'] ?? null, '2026-08-06T00:00:00Z'), true)
+})
+
+test('a dated entry round-trips through the file', () => {
+  const shots = loadShots(project({ '/a': { url: 'https://x/a.png', capturedAt: '2026-08-07T10:00:00Z' } }))
+  assert.equal(shots['/a']?.capturedAt, '2026-08-07T10:00:00Z')
+  assert.equal(isStaleShot(shots['/a'] ?? null, '2026-08-06T00:00:00Z'), false)
+})
+
+test('no screenshot at all is not stale — there is nothing to be stale', () => {
+  assert.equal(isStaleShot(null, '2026-08-06T00:00:00Z'), false)
+})
+
+test('an unknown commit time cannot prove staleness', () => {
+  assert.equal(isStaleShot({ url: 'https://x/a.png', capturedAt: '2026-08-01T00:00:00Z' }, null), false)
+})
+
+test('a malformed date is stale rather than silently trusted', () => {
+  assert.equal(isStaleShot({ url: 'https://x/a.png', capturedAt: 'yesterday' }, '2026-08-06T00:00:00Z'), true)
 })
 
 test('malformed JSON says which file and what shape is expected', () => {

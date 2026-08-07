@@ -14,7 +14,13 @@ import { join } from 'node:path'
  * browser, a headless runtime and a login flow inside a tool whose whole value
  * is being small and deterministic. Point it at images something else produced.
  */
-export type Shots = Record<string, string>
+export type Shot = {
+  url: string
+  /** When the image was captured, ISO. Absent means "unknown, assume stale". */
+  capturedAt?: string
+}
+
+export type Shots = Record<string, Shot>
 
 export function shotsPath(root: string): string {
   return join(root, '.figflow', 'shots.json')
@@ -35,10 +41,27 @@ export function loadShots(root: string): Shots {
   }
 
   const out: Shots = {}
-  for (const [route, url] of Object.entries(raw)) {
+  for (const [route, value] of Object.entries(raw)) {
     // `// note` keys are decoration, matching routes.json.
     if (route.startsWith('//')) continue
-    if (typeof url === 'string' && url.trim()) out[normalise(route)] = url.trim()
+
+    // A bare string is still valid; it simply carries no capture date, and an
+    // undated screenshot is treated as stale rather than trusted.
+    if (typeof value === 'string' && value.trim()) {
+      out[normalise(route)] = { url: value.trim() }
+      continue
+    }
+    if (value && typeof value === 'object') {
+      const v = value as { url?: unknown; capturedAt?: unknown }
+      if (typeof v.url === 'string' && v.url.trim()) {
+        out[normalise(route)] = {
+          url: v.url.trim(),
+          ...(typeof v.capturedAt === 'string' && v.capturedAt.trim()
+            ? { capturedAt: v.capturedAt.trim() }
+            : {}),
+        }
+      }
+    }
   }
   return out
 }
@@ -49,7 +72,22 @@ function normalise(route: string): string {
   return trimmed === '' ? '/' : trimmed
 }
 
-export function shotFor(shots: Shots, route: string | null): string | null {
+export function shotFor(shots: Shots, route: string | null): Shot | null {
   if (!route) return shots['/'] ?? null
   return shots[normalise(route)] ?? null
+}
+
+/**
+ * A screenshot taken before the work it is meant to show proves nothing — it is
+ * a picture of the old screen, presented as evidence of the new one. Undated
+ * screenshots count as stale: figflow cannot verify what it cannot date.
+ */
+export function isStaleShot(shot: Shot | null, workCommittedAt: string | null): boolean {
+  if (!shot) return false
+  if (!shot.capturedAt) return true
+  if (!workCommittedAt) return false
+  const captured = Date.parse(shot.capturedAt)
+  const committed = Date.parse(workCommittedAt)
+  if (Number.isNaN(captured) || Number.isNaN(committed)) return true
+  return captured < committed
 }

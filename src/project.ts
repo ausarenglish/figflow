@@ -10,6 +10,19 @@ function run(cmd: string, args: string[], cwd: string): string | null {
   }
 }
 
+/**
+ * When the application last changed, for judging whether a screenshot is out of
+ * date. Deliberately ignores .figflow/ — recording a report or a route mapping
+ * changes no screen, and comparing against plain HEAD would mark every
+ * screenshot stale the moment figflow wrote its own bookkeeping.
+ */
+export function lastAppChangeAt(cwd: string): string | null {
+  return (
+    run('git', ['log', '-1', '--format=%cI', '--', '.', ':(exclude).figflow'], cwd) ||
+    run('git', ['log', '-1', '--format=%cI'], cwd)
+  )
+}
+
 export function currentBranch(cwd: string): string | null {
   // symbolic-ref works on a branch with no commits yet; rev-parse does not.
   const branch = run('git', ['symbolic-ref', '--short', 'HEAD'], cwd)
